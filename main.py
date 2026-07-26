@@ -1,10 +1,21 @@
+import os
+import requests
+import pyodbc
+from datetime import datetime
+from typing import List
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List
-from datetime import datetime
-import requests
 
 app = FastAPI(title="Routing Optimization API")
+
+# --- CẤU HÌNH KẾT NỐI DATABASE DÙNG CHUNG ---
+SERVER = os.getenv("DB_SERVER", r'.\SQLEXPRESS')
+DATABASE = os.getenv("DB_NAME", 'DuLichThongMinh')
+
+def get_db_connection():
+    conn_str = f'DRIVER={{SQL Server}};SERVER={SERVER};DATABASE={DATABASE};Trusted_Connection=yes;'
+    return pyodbc.connect(conn_str)
+
 
 # --- ĐỊNH NGHĨA CẤU TRÚC JSON ---
 class Point(BaseModel):
@@ -16,6 +27,30 @@ class OptimizationRequest(BaseModel):
     points: List[Point]
     start_time: str
     end_time: str
+
+
+# --- API LẤY DANH SÁCH ĐỊA ĐIỂM TỪ DATABASE ---
+@app.get("/api/locations")
+def get_locations():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, ten, vi_do, kinh_do FROM DIA_DIEM")
+        
+        rows = cursor.fetchall()
+        locations = []
+        for row in rows:
+            locations.append({
+                "id": str(row.id),
+                "ten": row.ten,
+                "lat": row.vi_do,
+                "lon": row.kinh_do
+            })
+        conn.close()
+        return {"status": "success", "data": locations}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
 # --- HÀM GỌI API BÊN NGOÀI (EXTERNAL APIS) ---
 
@@ -31,7 +66,7 @@ def get_weather_factor(lat: float, lon: float) -> float:
             return 1.25 
         return 1.0
     except:
-        return 1.0 # Mặc định nếu API lỗi thì không điều chỉnh thời gian
+        return 1.0  # Mặc định nếu API lỗi thì không điều chỉnh thời gian
 
 def get_osrm_matrix(points: List[Point], k_weather: float):
     """Gọi OSRM API lấy ma trận thời gian thực tế giữa các tọa độ (tính bằng phút)"""
@@ -55,6 +90,7 @@ def get_osrm_matrix(points: List[Point], k_weather: float):
         num = len(points)
         return [[15 if i != j else 0 for j in range(num)] for i in range(num)]
 
+
 # --- THUẬT TOÁN 2-OPT ---
 
 def calculate_total_time(route, matrix):
@@ -68,7 +104,8 @@ def two_opt_algorithm(route, matrix):
         improved = False
         for i in range(1, len(best_route) - 2):
             for j in range(i + 1, len(best_route)):
-                if j - i == 1: continue
+                if j - i == 1:
+                    continue
                 new_route = best_route[:]
                 new_route[i:j] = best_route[i:j][::-1]
                 new_time = calculate_total_time(new_route, matrix)
@@ -76,6 +113,7 @@ def two_opt_algorithm(route, matrix):
                     best_route, best_time = new_route, new_time
                     improved = True
     return best_route, best_time
+
 
 # --- ENDPOINT CHÍNH ---
 
