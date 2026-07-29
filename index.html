@@ -14,10 +14,35 @@
     <div class="container-fluid h-100">
         <div class="row h-100">
             
-            <!-- PANEL BÊN TRÁI -->
-            <div class="col-md-4 col-lg-3 sidebar p-4 shadow">
+            <!-- PANEL BÊN TRÁI: Đã bổ sung overflow-y-auto và max-height: 100vh để hiện thanh cuộn -->
+            <div class="col-md-4 col-lg-3 sidebar p-4 shadow overflow-y-auto" style="max-height: 100vh;">
                 <h2 class="brand-title mb-4"><i class="fa-solid fa-route"></i> Lập Lịch Trình</h2>
                 
+                <div class="card mb-4 shadow-sm">
+                    <div class="card-header bg-custom text-white">
+                        <i class="fa-solid fa-car-side"></i> Thông tin di chuyển
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label" style="font-size: 0.9rem;">Ngày khởi hành</label>
+                            <input type="date" id="trip_date" class="form-control form-control-sm">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" style="font-size: 0.9rem;">Điểm xuất phát</label>
+                            <input type="text" id="start_point" class="form-control form-control-sm" placeholder="VD: Khách sạn, sân bay...">
+                        </div>
+                        <div>
+                            <label class="form-label" style="font-size: 0.9rem;">Phương tiện</label>
+                            <select id="vehicle_type" class="form-select form-select-sm">
+                                <option value="motorbike" selected>🏍️ Xe máy</option>
+                                <option value="car">🚗 Ô tô</option>
+                                <option value="bus">🚌 Xe buýt</option>
+                                <option value="walking">🚶 Đi bộ</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card mb-4 shadow-sm">
                     <div class="card-header bg-custom text-white">
                         <i class="fa-regular fa-clock"></i> Khung thời gian (Time-Window)
@@ -44,7 +69,6 @@
                         <label class="form-label text-muted" style="font-size: 0.9rem;">Khu vực bạn muốn khám phá:</label>
                         <select id="main_location" class="form-select shadow-sm border-0 bg-light">
                             <option value="Hanoi" selected>Thủ đô Hà Nội (30 địa điểm)</option>
-                            <!-- Có thể mở rộng Đà Nẵng, TP.HCM sau này -->
                         </select>
                     </div>
                 </div>
@@ -63,9 +87,7 @@
                         <span><i class="fa-solid fa-timeline"></i> Đề Xuất Lộ Trình</span>
                     </div>
                     <div class="card-body">
-                        <!-- Dropdown để chuyển đổi giữa các Lộ trình được sinh ra -->
                         <select id="route_selector" class="form-select form-select-sm mb-3 shadow-sm font-weight-bold" style="border-color: #d87c4f;"></select>
-                        
                         <div id="metrics-info" class="alert py-2 mb-3" style="font-size: 0.9rem;"></div>
                         <ul id="timeline-list" class="timeline-ui"></ul>
                     </div>
