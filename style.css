@@ -1,0 +1,94 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;1,600&family=Roboto:wght@400;500&display=swap');
+
+html, body {
+    height: 100vh;
+    background-color: #f7f5f0; /* Tone màu giấy cũ */
+    font-family: 'Roboto', sans-serif;
+    overflow: hidden;
+}
+
+.brand-title {
+    font-family: 'Playfair Display', serif;
+    color: #4a3b32;
+    font-weight: 600;
+}
+
+.sidebar {
+    background-color: #fdfbf7;
+    border-right: 1px solid #e5e0d8;
+    z-index: 10;
+}
+
+.bg-custom {
+    background-color: #5c4d42 !important; /* Nâu trầm */
+}
+
+.btn-vintage {
+    background-color: #d87c4f; /* Cam cháy Kodak */
+    border: none;
+    color: white;
+    transition: all 0.3s ease;
+}
+
+.btn-vintage:hover {
+    background-color: #bf663c;
+    color: white;
+    transform: translateY(-2px);
+}
+
+.location-list-scroll {
+    max-height: 45vh;
+    overflow-y: auto;
+}
+
+/* Tùy chỉnh Scrollbar */
+.location-list-scroll::-webkit-scrollbar { width: 6px; }
+.location-list-scroll::-webkit-scrollbar-thumb { background: #d0c8b8; border-radius: 4px; }
+
+.form-check-input:checked {
+    background-color: #d87c4f;
+    border-color: #d87c4f;
+}
+
+/* Card Kết quả bay lơ lửng trên bản đồ */
+.result-card {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 350px;
+    max-height: 85vh;
+    overflow-y: auto;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(5px);
+    border: none;
+}
+
+/* Giao diện Timeline */
+.timeline-ui {
+    list-style: none;
+    padding-left: 15px;
+    border-left: 2px solid #d87c4f;
+    margin: 0;
+}
+
+.timeline-ui li {
+    position: relative;
+    padding-bottom: 15px;
+    padding-left: 15px;
+}
+
+.timeline-ui li::before {
+    content: "";
+    position: absolute;
+    left: -21px;
+    top: 0;
+    width: 10px;
+    height: 10px;
+    background-color: #d87c4f;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 0 0 2px #d87c4f;
+}
+
+.timeline-ui li:last-child { border: 0; padding-bottom: 0; }
