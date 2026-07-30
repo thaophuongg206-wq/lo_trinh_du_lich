@@ -9,10 +9,13 @@ $(document).ready(function () {
     let originalLocations = [];
     let generatedRoutes = []; 
     let availableMinutes = 0;
+    let currentLocationMarker = null;  // Marker vị trí hiện tại của người dùng
+    let currentLocationData = null;    // { lat, lon } nếu dùng GPS
 
-    // Tự động set ngày hôm nay cho ô Input Ngày khởi hành
+    // Tự động set ngày hôm nay + chặn không cho chọn ngày quá khứ
     const today = new Date().toISOString().split('T')[0];
     $('#trip_date').val(today);
+    $('#trip_date').attr('min', today);  // Ngày tối thiểu = hôm nay
 
     $.ajax({
         url: 'http://127.0.0.1:8000/api/locations',
@@ -24,16 +27,84 @@ $(document).ready(function () {
         }
     });
 
+    // ================================================================
+    // NÚt 📍 "Dùng vị trí hiện tại" → gọi GPS trình duyệt
+    // ================================================================
+    $('#btn-use-location').on('click', function () {
+        const $status = $('#location-status');
+        const $btn = $(this);
+
+        if (!navigator.geolocation) {
+            $status.html('<span class="text-danger"><i class="fa-solid fa-circle-xmark"></i> Trình duyệt không hỗ trợ GPS!</span>');
+            return;
+        }
+
+        $btn.prop('disabled', true);
+        $status.html('<span class="text-muted"><i class="fa-solid fa-spinner fa-spin"></i> Đang xác định vị trí...</span>');
+
+        navigator.geolocation.getCurrentPosition(
+            // Thành công
+            function (position) {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                currentLocationData = { lat, lon };
+
+                // Xóa marker cũ nếu có
+                if (currentLocationMarker) map.removeLayer(currentLocationMarker);
+
+                // Hiển thị marker vị trí hiện tại trên bản đồ
+                const gpsIcon = L.divIcon({
+                    html: `<div style="
+                        background: #28a745; color: white;
+                        border-radius: 50%; width: 28px; height: 28px;
+                        display: flex; align-items: center; justify-content: center;
+                        border: 3px solid white; box-shadow: 0 0 8px rgba(40,167,69,0.8);
+                        font-size: 14px;
+                    "><i class="fa-solid fa-location-dot"></i></div>`,
+                    className: '', iconSize: [28, 28], iconAnchor: [14, 14]
+                });
+
+                currentLocationMarker = L.marker([lat, lon], { icon: gpsIcon })
+                    .bindPopup('<b>📍 Vị trí của bạn</b>')
+                    .addTo(map);
+
+                map.setView([lat, lon], 15);
+
+                // Cập nhật text vào ô điểm xuất phát
+                $('#start_point').val(`📍 Vị trí hiện tại (${lat.toFixed(5)}, ${lon.toFixed(5)})`);
+                $status.html('<span class="text-success"><i class="fa-solid fa-circle-check"></i> Đã xác định vị trí!</span>');
+                $btn.prop('disabled', false);
+            },
+            // Thất bại
+            function (error) {
+                let msg = 'Không lấy được vị trí!';
+                if (error.code === 1) msg = 'Bạn đã tắt quyền GPS. Hãy cấp quyền trong trình duyệt!';
+                if (error.code === 2) msg = 'Không xác định được vị trí. Thử lại!';
+                if (error.code === 3) msg = 'Quá thời gian chờ GPS!';
+                $status.html(`<span class="text-danger"><i class="fa-solid fa-circle-xmark"></i> ${msg}</span>`);
+                $btn.prop('disabled', false);
+            },
+            { timeout: 10000, maximumAge: 60000 }
+        );
+    });
+
     $('#btn-optimize').on('click', function () {
-        // BỔ SUNG: Gói thêm 3 dữ liệu mới vào Payload để chờ Backend xử lý
         const payload = {
             region: $('#main_location').val(),
             start_time: $('#start_time').val(),
             end_time: $('#end_time').val(),
             trip_date: $('#trip_date').val(),
-            start_point: $('#start_point').val(),
-            vehicle_type: $('#vehicle_type').val()
+            vehicle_type: $('#vehicle_type').val(),
         };
+
+        // Nếu người dùng chọn GPS → gửi tọa độ thực; ngược lại gửi tên
+        if (currentLocationData) {
+            payload.start_lat = currentLocationData.lat;
+            payload.start_lon = currentLocationData.lon;
+            payload.start_point = '';   // Không cần tìm theo tên
+        } else {
+            payload.start_point = $('#start_point').val();
+        }
 
         const $btn = $(this);
         $btn.html('<span class="spinner-border spinner-border-sm"></span> Đang tạo lộ trình...');

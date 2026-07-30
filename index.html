@@ -29,15 +29,24 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label" style="font-size: 0.9rem;">Điểm xuất phát</label>
-                            <input type="text" id="start_point" class="form-control form-control-sm" placeholder="VD: Khách sạn, sân bay...">
+                            <div class="input-group input-group-sm">
+                                <input type="text" id="start_point" class="form-control" placeholder="VD: Khách sạn, sân bay...">
+                                <button id="btn-use-location" class="btn btn-outline-success" type="button" title="Dùng vị trí hiện tại">
+                                    <i class="fa-solid fa-location-crosshairs"></i>
+                                </button>
+                            </div>
+                            <div id="location-status" class="mt-1" style="font-size: 0.8rem;"></div>
                         </div>
                         <div>
                             <label class="form-label" style="font-size: 0.9rem;">Phương tiện</label>
                             <select id="vehicle_type" class="form-select form-select-sm">
-                                <option value="motorbike" selected>🏍️ Xe máy</option>
-                                <option value="car">🚗 Ô tô</option>
-                                <option value="bus">🚌 Xe buýt</option>
-                                <option value="walking">🚶 Đi bộ</option>
+                                <option value="xe_may" selected>🏍️ Xe máy</option>
+                                <option value="o_to">🚗 Ô tô cá nhân</option>
+                                <option value="xe_16_cho">🚐 Xe 16 chỗ</option>
+                                <option value="xe_29_cho">🚌 Xe 29 chỗ</option>
+                                <option value="xe_45_cho">🚌 Xe 45 chỗ</option>
+                                <option value="xe_dap">🚲 Xe đạp</option>
+                                <option value="di_bo">🚶 Đi bộ</option>
                             </select>
                         </div>
                     </div>
