@@ -13,11 +13,24 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-SERVER = os.getenv("DB_SERVER", r'LAPTOP-EV7C4EMM')
-DATABASE = os.getenv("DB_NAME", 'DuLichThongMinh')
+SERVER   = os.getenv("DB_SERVER",   r'DESKTOP-I8NIUKA\SQLEXPRESS05')
+DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
+
 
 def get_db_connection():
-    return pyodbc.connect(f'DRIVER={{SQL Server}};SERVER={SERVER};DATABASE={DATABASE};Trusted_Connection=yes;')
+    return pyodbc.connect(
+        f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+        f'SERVER={SERVER};'
+        f'DATABASE={DATABASE};'
+        f'Trusted_Connection=yes;'
+        f'TrustServerCertificate=yes;'
+    )
+
+
+
+
+
+
 
 class OptimizationRequest(BaseModel):
     region: str
