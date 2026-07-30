@@ -1,4 +1,4 @@
-﻿
+
 CREATE DATABASE DuLichThongMinh;
 USE DuLichThongMinh;
 
@@ -77,7 +77,8 @@ CREATE TABLE DIEM_DUNG_LO_TRINH (
 --Up Dữ Liệu
 
 --Chế độ chèn ID thành công
-SET IDENTITY_INSERT  ON;
+SET IDENTITY_INSERT DIA_DIEM ON;
+
 
 INSERT INTO DIA_DIEM (id, ten, loai_hinh, mo_ta, vi_do, kinh_do, diem_gia_tri, thoi_gian_tham_quan_phut)
 VALUES
@@ -148,11 +149,4 @@ VALUES
 (30, '09:00', '22:00', N'Tất cả các ngày');
 
 
--- Xóa dữ liệu
-
--- 1
-EXEC sp_Xoa 'ALTER TABLE ? NOCHECK CONSTRAINT ALL';
--- 2
-EXEC sp_Xoa 'TRUNCATE TABLE ?';
--- 3
-EXEC sp_Xoa 'ALTER TABLE ? CHECK CONSTRAINT ALL';
+
