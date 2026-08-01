@@ -2,6 +2,7 @@ import os
 import requests
 import pyodbc
 import math
+import random
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import FastAPI
@@ -214,7 +215,8 @@ def two_opt_algorithm(route, matrix_dict, points_data, k_weather, k_density, clo
     improved = True
     while improved:
         improved = False
-        for i in range(0, len(best_route) - 1):
+        # Bắt đầu từ i=1 để KHÔNG đảo điểm xuất phát (index 0 luôn cố định)
+        for i in range(1, len(best_route) - 1):
             for j in range(i + 1, len(best_route) + 1):
                 if j - i <= 1: continue
                 new_route = best_route[:]
@@ -308,12 +310,16 @@ async def optimize_route(request: OptimizationRequest):
         # TRƯỜNG HỢP 2: Người dùng nhập tên điểm → tìm trong DB
         keyword = request.start_point.strip().lower()
         matched_points = [p for p in all_points if keyword in p["ten"].lower()]
-        starting_points = matched_points[:1] if matched_points else all_points[:3]
+        if matched_points:
+            starting_points = matched_points[:1]  # Chỉ xuất phát từ điểm tìm được
+        else:
+            # Không tìm thấy tên trong DB → báo lỗi hoặc fallback top 1
+            starting_points = all_points[:1]
 
     else:
-        # TRƯỜNG HỢP 3: Không nhập gì → dùng top 3 điểm cao nhất
+        # TRƯỜNG HỢP 3: Không nhập gì → dùng top 3 điểm cao nhất để đa dạng lộ trình
         starting_points = all_points[:3]
-    # 6. TÍNH TOÁN LỘ TRÌNH TỐI Ưu
+    # 6. TÍNH TOÁN LỘ TRÌNH TỐI ƯU
     initial_k_density = get_density_factor(request.start_time)
 
     # Hệ số hạn chế xe lớn theo giờ (chỉ áp dụng nếu là xe 16/29/45 chỗ)
@@ -321,127 +327,279 @@ async def optimize_route(request: OptimizationRequest):
 
     def calc_dist(p1, p2): return math.sqrt((p1["lat"] - p2["lat"])**2 + (p1["lon"] - p2["lon"])**2) * 111
 
-    def generate_routes_with_factor(k_dens):
-        generated = []
-        for origin in starting_points:
-            k_weather = get_weather_factor(origin["lat"], origin["lon"])
-            # Hệ số tổng hợp: thời tiết × hạn chế xe lớn
-            k_total = k_weather * k_restriction
-            
-            origin_open = datetime.combine(base_date, origin["open_time"])
-            origin_close = datetime.combine(base_date, origin["close_time"])
-            
-            current_clock = max(clock_start, origin_open)
-            visit_mins = origin["time"] * k_dens
-            departure = current_clock + timedelta(minutes=visit_mins)
-            
-            if departure > origin_close or departure > clock_end:
-                continue 
-                
-            selected_points = [origin]
-            unvisited = [p for p in all_points if p["id"] != origin["id"]]
+    def build_route_greedy(origin, unvisited_pool, k_dens, k_total, departure_time):
+        """
+        Xây dựng một lộ trình tham lam (greedy) từ origin theo chiến lược được truyền vào.
+        Trả về (selected_points, departure_clock) hoặc (None, None) nếu thất bại.
+        """
+        origin_open = datetime.combine(base_date, origin["open_time"])
+        origin_close = datetime.combine(base_date, origin["close_time"])
 
-            while True:
-                best_next = None
-                best_score = float('inf')
-                best_departure = departure
-                
-                for p in unvisited:
-                    est_travel = (calc_dist(selected_points[-1], p) / 20.0) * 60 * k_total
-                    est_visit = p["time"] * k_dens
-                    
-                    arrival = departure + timedelta(minutes=est_travel)
-                    p_open = datetime.combine(base_date, p["open_time"])
-                    p_close = datetime.combine(base_date, p["close_time"])
-                    
-                    start_visit = max(arrival, p_open)
-                    next_departure = start_visit + timedelta(minutes=est_visit)
-                    
-                    if next_departure <= p_close and next_departure <= clock_end:
-                        dist = calc_dist(selected_points[-1], p)
-                        
-                        penalty = 0
-                        if p["loai_hinh"] == selected_points[-1]["loai_hinh"]:
-                            penalty += 30
-                        elif len(selected_points) > 1 and p["loai_hinh"] == selected_points[-2]["loai_hinh"]:
-                            penalty += 15
-                            
-                        score = dist + penalty
-                        if score < best_score:
-                            best_score = score
-                            best_next = p
-                            best_departure = next_departure
-                            
-                if best_next:
-                    selected_points.append(best_next)
-                    unvisited.remove(best_next)
-                    departure = best_departure
-                else:
-                    break
+        current_clock = max(departure_time, origin_open)
+        visit_mins = origin["time"] * k_dens
+        departure = current_clock + timedelta(minutes=visit_mins)
 
-            if len(selected_points) < 2:
-                continue 
+        if departure > origin_close or departure > clock_end:
+            return None, None
 
-            initial_route = list(range(len(selected_points)))
-            # Dùng k_total (= k_weather × k_restriction) để 2-opt cũng tính đúng hạn chế xe lớn
-            best_route_indices, best_cost = two_opt_algorithm(initial_route, global_matrix, selected_points, k_total, k_dens, clock_start, clock_end, base_date)
+        selected_points = [origin]
+        unvisited = list(unvisited_pool)
 
-            dropped_point = False
-            while (best_cost >= 10000 or best_cost > available_minutes) and len(best_route_indices) > 2:
-                start_id = selected_points[best_route_indices[0]]["id"]
-                furthest_idx = max(best_route_indices[1:], key=lambda x: global_matrix[start_id][selected_points[x]["id"]]["duration"])
-                best_route_indices.remove(furthest_idx)
-                dropped_point = True
-                # Dùng k_total ở đây cho nhất quán
-                best_route_indices, best_cost = two_opt_algorithm(best_route_indices, global_matrix, selected_points, k_total, k_dens, clock_start, clock_end, base_date)
+        while True:
+            best_next = None
+            best_score = float('inf')
+            best_departure = departure
 
-            final_route_details = []
-            simulated_clock = clock_start
-            
-            for i in range(len(best_route_indices)):
-                idx = best_route_indices[i]
-                point = selected_points[idx]
-                p_open = datetime.combine(base_date, point["open_time"])
-                
-                travel_time = 0
-                if i > 0:
-                    prev_point = selected_points[best_route_indices[i-1]]
-                    travel_time = global_matrix[prev_point["id"]][point["id"]]["duration"] * k_weather
-                    simulated_clock += timedelta(minutes=travel_time)
-                    
-                wait_time = 0
-                if simulated_clock < p_open:
-                    wait_time = (p_open - simulated_clock).total_seconds() / 60
-                    simulated_clock = p_open
-                    
-                visit_time = point["time"] * k_dens
-                simulated_clock += timedelta(minutes=visit_time)
-                
-                final_route_details.append({
-                    "id": point["id"], "ten": point["ten"], "lat": point["lat"], "lon": point["lon"],
-                    "visit_time": round(visit_time, 1),
-                    "wait_time": round(wait_time, 1),
-                    "travel_to_next": 0,
-                    "distance_to_next": 0
-                })
-                
-            for i in range(len(final_route_details) - 1):
-                idx1 = best_route_indices[i]
-                idx2 = best_route_indices[i+1]
-                travel_dur = global_matrix[selected_points[idx1]["id"]][selected_points[idx2]["id"]]["duration"] * k_weather
-                travel_dist = global_matrix[selected_points[idx1]["id"]][selected_points[idx2]["id"]]["distance"]
-                final_route_details[i]["travel_to_next"] = round(travel_dur, 1)
-                final_route_details[i]["distance_to_next"] = round(travel_dist, 1)
+            for p in unvisited:
+                est_travel = (calc_dist(selected_points[-1], p) / 20.0) * 60 * k_total
+                est_visit = p["time"] * k_dens
 
-            generated.append({
-                "route_id": len(generated) + 1,
-                "dropped_point": dropped_point,
-                "total_time_minutes": round(best_cost, 1),
-                "vehicle_type": request.vehicle_type,   # Trả về phương tiện đã dùng
-                "trip_date": str(base_date),             # Trả về ngày khởi hành
-                "optimized_route": final_route_details
+                arrival = departure + timedelta(minutes=est_travel)
+                p_open = datetime.combine(base_date, p["open_time"])
+                p_close = datetime.combine(base_date, p["close_time"])
+
+                start_visit = max(arrival, p_open)
+                next_departure = start_visit + timedelta(minutes=est_visit)
+
+                if next_departure <= p_close and next_departure <= clock_end:
+                    dist = calc_dist(selected_points[-1], p)
+                    penalty = 0
+                    if p["loai_hinh"] == selected_points[-1]["loai_hinh"]:
+                        penalty += 30
+                    elif len(selected_points) > 1 and p["loai_hinh"] == selected_points[-2]["loai_hinh"]:
+                        penalty += 15
+                    score = dist + penalty
+                    if score < best_score:
+                        best_score = score
+                        best_next = p
+                        best_departure = next_departure
+
+            if best_next:
+                selected_points.append(best_next)
+                unvisited.remove(best_next)
+                departure = best_departure
+            else:
+                break
+
+        return selected_points, departure
+
+    def finalize_route(selected_points, k_weather, k_dens, k_total, route_label):
+        """
+        Áp dụng 2-opt, xử lý dropped_point, rồi tạo chi tiết lộ trình.
+        Trả về dict lộ trình hoặc None nếu không hợp lệ.
+        """
+        if len(selected_points) < 2:
+            return None
+
+        initial_route = list(range(len(selected_points)))
+        best_route_indices, best_cost = two_opt_algorithm(
+            initial_route, global_matrix, selected_points,
+            k_total, k_dens, clock_start, clock_end, base_date
+        )
+
+        dropped_point = False
+        while (best_cost >= 10000 or best_cost > available_minutes) and len(best_route_indices) > 2:
+            start_id = selected_points[best_route_indices[0]]["id"]
+            furthest_idx = max(
+                best_route_indices[1:],
+                key=lambda x: global_matrix[start_id][selected_points[x]["id"]]["duration"]
+            )
+            best_route_indices.remove(furthest_idx)
+            dropped_point = True
+            best_route_indices, best_cost = two_opt_algorithm(
+                best_route_indices, global_matrix, selected_points,
+                k_total, k_dens, clock_start, clock_end, base_date
+            )
+
+        if len(best_route_indices) < 2 or best_cost >= 10000:
+            return None
+
+        final_route_details = []
+        simulated_clock = clock_start
+
+        for i in range(len(best_route_indices)):
+            idx = best_route_indices[i]
+            point = selected_points[idx]
+            p_open = datetime.combine(base_date, point["open_time"])
+
+            travel_time = 0
+            if i > 0:
+                prev_point = selected_points[best_route_indices[i - 1]]
+                travel_time = global_matrix[prev_point["id"]][point["id"]]["duration"] * k_weather
+                simulated_clock += timedelta(minutes=travel_time)
+
+            wait_time = 0
+            if simulated_clock < p_open:
+                wait_time = (p_open - simulated_clock).total_seconds() / 60
+                simulated_clock = p_open
+
+            arrive_time_str = simulated_clock.strftime("%H:%M")   # Giờ đến
+            visit_time = point["time"] * k_dens
+            simulated_clock += timedelta(minutes=visit_time)
+            depart_time_str = simulated_clock.strftime("%H:%M")   # Giờ rời
+
+            final_route_details.append({
+                "id": point["id"], "ten": point["ten"],
+                "lat": point["lat"], "lon": point["lon"],
+                "visit_time": round(visit_time, 1),
+                "wait_time": round(wait_time, 1),
+                "arrive_time": arrive_time_str,
+                "depart_time": depart_time_str,
+                "travel_to_next": 0,
+                "distance_to_next": 0
             })
+
+        for i in range(len(final_route_details) - 1):
+            idx1 = best_route_indices[i]
+            idx2 = best_route_indices[i + 1]
+            travel_dur = global_matrix[selected_points[idx1]["id"]][selected_points[idx2]["id"]]["duration"] * k_weather
+            travel_dist = global_matrix[selected_points[idx1]["id"]][selected_points[idx2]["id"]]["distance"]
+            final_route_details[i]["travel_to_next"] = round(travel_dur, 1)
+            final_route_details[i]["distance_to_next"] = round(travel_dist, 1)
+
+        total_actual = (simulated_clock - clock_start).total_seconds() / 60
+
+        return {
+            "dropped_point": dropped_point,
+            "total_time_minutes": round(total_actual, 1),
+            "vehicle_type": request.vehicle_type,
+            "trip_date": str(base_date),
+            "strategy": route_label,
+            "optimized_route": final_route_details
+        }
+
+    def build_route_greedy_custom(origin, candidate_pool, k_dens, k_total, end_clock, score_fn):
+        """
+        Greedy builder với scorer tùy chỉnh.
+        score_fn(last_point, candidate, dist_km) -> float  (nhỏ hơn = ưu tiên hơn)
+        end_clock: thời điểm kết thúc tối đa (clock_end hoặc fake ngắn hơn).
+        """
+        origin_open  = datetime.combine(base_date, origin["open_time"])
+        origin_close = datetime.combine(base_date, origin["close_time"])
+        current_clock = max(clock_start, origin_open)
+        departure = current_clock + timedelta(minutes=origin["time"] * k_dens)
+        if departure > origin_close or departure > end_clock:
+            return None
+        selected  = [origin]
+        unvisited = list(candidate_pool)
+        while True:
+            best_next  = None
+            best_score = float('inf')
+            best_dep   = departure
+            for p in unvisited:
+                dist       = calc_dist(selected[-1], p)
+                est_travel = (dist / 20.0) * 60 * k_total
+                est_visit  = p["time"] * k_dens
+                arrival    = departure + timedelta(minutes=est_travel)
+                p_open     = datetime.combine(base_date, p["open_time"])
+                p_close    = datetime.combine(base_date, p["close_time"])
+                sv         = max(arrival, p_open)
+                nd         = sv + timedelta(minutes=est_visit)
+                if nd <= p_close and nd <= end_clock:
+                    sc = score_fn(selected[-1], p, dist)
+                    if sc < best_score:
+                        best_score = sc
+                        best_next  = p
+                        best_dep   = nd
+            if best_next:
+                selected.append(best_next)
+                unvisited.remove(best_next)
+                departure = best_dep
+            else:
+                break
+        return selected if len(selected) >= 2 else None
+
+    def generate_routes_with_factor(k_dens):
+        generated         = []
+        seen_fingerprints = set()
+
+        def try_add(pts, k_weather, label):
+            if not pts or len(pts) < 2:
+                return
+            k_total_local = k_weather * k_restriction
+            r = finalize_route(pts, k_weather, k_dens, k_total_local, label)
+            if not r:
+                return
+            fp = frozenset(p["id"] for p in r["optimized_route"])
+            if fp not in seen_fingerprints:
+                seen_fingerprints.add(fp)
+                r["route_id"] = len(generated) + 1
+                generated.append(r)
+
+        for origin in starting_points:
+            k_weather      = get_weather_factor(origin["lat"], origin["lon"])
+            k_total        = k_weather * k_restriction
+            base_unvisited = [p for p in all_points if p["id"] != origin["id"]]
+
+            pool_near  = sorted(base_unvisited, key=lambda p: calc_dist(origin, p))
+            pool_value = sorted(base_unvisited, key=lambda p: -(p.get("score") or 0))
+
+            # ── Scorers với hành vi thực sự khác nhau ──
+            scorers = [
+                (lambda last, p, d: d,                                                         "🏃 Gần nhất"),
+                (lambda last, p, d: -(p.get("score") or 0),                                   "⭐ Nổi bật"),
+                (lambda last, p, d: d / ((p.get("score") or 1) + 1),                          "⚖️ Cân bằng"),
+                (lambda last, p, d: d + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "🌈 Đa dạng"),
+                (lambda last, p, d: -(p.get("score") or 0) + (80 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "🎯 Giá trị & đa dạng"),
+            ]
+
+            # ── Ngân sách thời gian: tạo lộ trình theo nhiều độ dài ──
+            # Tính số mốc thời gian dựa trên quỹ thực tế
+            min_budget = 60  # ít nhất 1 giờ
+            budget_ratios = [0.25, 0.35, 0.5, 0.65, 0.8, 1.0]
+            time_budgets = []
+            for ratio in budget_ratios:
+                mins = available_minutes * ratio
+                if mins >= min_budget:
+                    end_t = clock_start + timedelta(minutes=mins)
+                    hrs   = int(mins // 60)
+                    mns   = int(mins % 60)
+                    label_t = f"{hrs}h{mns:02d}" if hrs > 0 else f"{int(mins)}ph"
+                    time_budgets.append((end_t, label_t, ratio))
+
+            # ── MA TRẬN: Mỗi ngân sách × Mỗi scorer ──
+            for end_t, time_label, ratio in time_budgets:
+                for score_fn, strat_name in scorers:
+                    label = f"{strat_name} · {time_label}"
+                    try_add(
+                        build_route_greedy_custom(origin, base_unvisited, k_dens, k_total, end_t, score_fn),
+                        k_weather, label
+                    )
+
+                # Pool giới hạn chỉ áp dụng cho ngân sách ≥ 50%
+                if ratio >= 0.5:
+                    near_n = max(8, len(base_unvisited) // 3)
+                    val_n  = max(8, len(base_unvisited) // 3)
+                    try_add(build_route_greedy_custom(origin, pool_value[:val_n], k_dens, k_total, end_t,
+                                                       lambda last, p, d: d), k_weather, f"🏆 Top điểm · {time_label}")
+                    try_add(build_route_greedy_custom(origin, pool_near[:near_n], k_dens, k_total, end_t,
+                                                       lambda last, p, d: -(p.get("score") or 0)), k_weather, f"🗺️ Lân cận · {time_label}")
+
+            # ── Loại trừ điểm top → lộ trình thực sự khác biệt ──
+            for skip in range(min(5, len(pool_value))):
+                pool_excl = [p for p in base_unvisited if p["id"] != pool_value[skip]["id"]]
+                try_add(
+                    build_route_greedy_custom(origin, pool_excl, k_dens, k_total, clock_end,
+                                              lambda last, p, d: d / ((p.get("score") or 1) + 1)),
+                    k_weather, f"🔀 Thay thế #{skip+1}"
+                )
+
+            # ── Random sample nhiều seed ──
+            for seed in [7, 13, 42, 77, 99, 111, 123, 200]:
+                rng    = random.Random(seed)
+                # Thay đổi kích thước sample theo seed để đa dạng hơn
+                n      = max(6, int(len(base_unvisited) * (0.3 + (seed % 5) * 0.1)))
+                n      = min(n, len(base_unvisited))
+                sample = rng.sample(base_unvisited, n)
+                try_add(
+                    build_route_greedy_custom(origin, sample, k_dens, k_total, clock_end,
+                                              lambda last, p, d: d / ((p.get("score") or 1) + 1)),
+                    k_weather, f"🎲 Khám phá #{seed}"
+                )
+
         return generated
+
+
 
     generated_routes = generate_routes_with_factor(initial_k_density)
     if len(generated_routes) == 0 and initial_k_density > 1.0:
@@ -449,6 +607,11 @@ async def optimize_route(request: OptimizationRequest):
 
     if len(generated_routes) == 0:
         return {"status": "error", "message": "Quỹ thời gian quá ngắn hoặc các địa điểm đều chưa mở cửa vào khung giờ này!"}
+
+    # Sắp xếp lộ trình theo số điểm tham quan giảm dần, rồi theo thời gian tăng dần
+    generated_routes.sort(key=lambda r: (-len(r["optimized_route"]), r["total_time_minutes"]))
+    for i, r in enumerate(generated_routes):
+        r["route_id"] = i + 1
 
     return {
         "status": "success",
