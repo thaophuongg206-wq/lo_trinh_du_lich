@@ -207,7 +207,9 @@ $(document).ready(function () {
 
                     const $selector = $('#route_selector').empty();
                     generatedRoutes.forEach((route, index) => {
-                        $selector.append(`<option value="${index}">🌟 Lộ trình ${index + 1} (${route.total_time_minutes} phút)</option>`);
+                        const numPoints = route.optimized_route.length;
+                        const strategy = route.strategy || `Lộ trình ${index + 1}`;
+                        $selector.append(`<option value="${index}">${strategy} — ${numPoints} điểm · ${route.total_time_minutes} phút</option>`);
                     });
 
                     $('#result-panel').removeClass('d-none');
@@ -235,8 +237,14 @@ $(document).ready(function () {
         const routeData = generatedRoutes[index];
         const $timeline = $('#timeline-list').empty();
 
+        // Hiển thị giờ bắt đầu / kết thúc thực tế
+        const firstPoint = routeData.optimized_route[0];
+        const lastPoint  = routeData.optimized_route[routeData.optimized_route.length - 1];
+        const startStr   = firstPoint ? firstPoint.arrive_time : '--:--';
+        const endStr     = lastPoint  ? lastPoint.depart_time  : '--:--';
+
         let alertClass = routeData.dropped_point ? 'alert-warning' : 'alert-success';
-        let msg = `<strong>Tổng thời gian:</strong> ${routeData.total_time_minutes} / ${availableMinutes} phút.`;
+        let msg = `<strong>🕐 Bắt đầu:</strong> ${startStr} &nbsp;→&nbsp; <strong>🕔 Kết thúc:</strong> ${endStr} &nbsp;|&nbsp; <strong>Tổng:</strong> ${routeData.total_time_minutes} / ${availableMinutes} phút.`;
         
         if (routeData.dropped_point) {
             msg += `<br><em style="font-size: 0.85rem;">* Hệ thống đã tự động loại bỏ điểm xa nhất do không đủ quỹ thời gian.</em>`;
@@ -263,10 +271,16 @@ $(document).ready(function () {
                 `;
             }
 
+            const timeTag = (loc.arrive_time && loc.depart_time)
+                ? `<span class="badge text-bg-secondary ms-2" style="font-size:0.78rem; font-weight:500;">
+                       ${loc.arrive_time} – ${loc.depart_time}
+                   </span>`
+                : '';
+
             $timeline.append(`
                 <li>
                     <strong class="text-dark">Điểm ${idx + 1}:</strong> 
-                    <span class="text-dark fw-bold">${loc.ten}</span>
+                    <span class="text-dark fw-bold">${loc.ten}</span>${timeTag}
                     <div class="text-muted mt-1" style="font-size: 0.85rem;">
                         <i class="fa-regular fa-clock"></i> Tham quan: ${loc.visit_time} phút
                     </div>
