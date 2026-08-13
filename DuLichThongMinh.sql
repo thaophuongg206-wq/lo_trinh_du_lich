@@ -148,5 +148,221 @@ VALUES
 (29, '07:00', '20:00', N'Tất cả các ngày'),
 (30, '09:00', '22:00', N'Tất cả các ngày');
 
+--8/12/2026
+-- Update điểm giá giá trị
+UPDATE DIA_DIEM SET diem_gia_tri = 4.3 WHERE id = 1;  -- Lotte Center Liễu Giai
+UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 2;  -- Vincom Center Bà Triệu
+UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 3;  -- Tràng Tiền Plaza
+UPDATE DIA_DIEM SET diem_gia_tri = 4.5 WHERE id = 4;  -- Vincom Mega Mall Royal City
+UPDATE DIA_DIEM SET diem_gia_tri = 4.6 WHERE id = 5;  -- Aeon Mall Long Biên
+UPDATE DIA_DIEM SET diem_gia_tri = 4.2 WHERE id = 6;  -- Phở Thìn Bờ Hồ
+UPDATE DIA_DIEM SET diem_gia_tri = 4.1 WHERE id = 7;  -- Bún chả Hương Liên
+UPDATE DIA_DIEM SET diem_gia_tri = 2.3 WHERE id = 8;  -- Bánh tôm Hồ Tây
+UPDATE DIA_DIEM SET diem_gia_tri = 4.5 WHERE id = 9;  -- Vua chả cá
+UPDATE DIA_DIEM SET diem_gia_tri = 3.3 WHERE id = 10; -- Bún đậu mắm tôm Ngõ Trạm
+UPDATE DIA_DIEM SET diem_gia_tri = 4.0 WHERE id = 11; -- Phở cuốn Hương Mai
+UPDATE DIA_DIEM SET diem_gia_tri = 4.0 WHERE id = 12; -- Nộm Long Vi Dũng
+UPDATE DIA_DIEM SET diem_gia_tri = 4.3 WHERE id = 13; -- Bánh mì Trâm
+UPDATE DIA_DIEM SET diem_gia_tri = 4.0 WHERE id = 14; -- Miến lươn Chân Cầm
+UPDATE DIA_DIEM SET diem_gia_tri = 4.0 WHERE id = 15; -- Xôi Yến
+UPDATE DIA_DIEM SET diem_gia_tri = 4.7 WHERE id = 16; -- Loading T Cafe
+UPDATE DIA_DIEM SET diem_gia_tri = 4.7 WHERE id = 17; -- All Day Coffee
+UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 18; -- Cafe Giảng
+UPDATE DIA_DIEM SET diem_gia_tri = 4.6 WHERE id = 19; -- Blackbird Coffee
+UPDATE DIA_DIEM SET diem_gia_tri = 4.6 WHERE id = 20; -- Cotero Coffee
+UPDATE DIA_DIEM SET diem_gia_tri = 4.1 WHERE id = 21; -- La Mensa
+UPDATE DIA_DIEM SET diem_gia_tri = 4.8 WHERE id = 22; -- Ban Công Cafe
+UPDATE DIA_DIEM SET diem_gia_tri = 4.8 WHERE id = 23; -- Yên Cafe
+UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 24; -- Hasu Cafe
+UPDATE DIA_DIEM SET diem_gia_tri = 5.0 WHERE id = 25; -- Atelier Coffee
+UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 26; -- Đền Ngọc Sơn
+UPDATE DIA_DIEM SET diem_gia_tri = 4.5 WHERE id = 27; -- Lăng Chủ tịch Hồ Chí Minh
+UPDATE DIA_DIEM SET diem_gia_tri = 4.6 WHERE id = 28; -- Văn Miếu - Quốc Tử Giám
+UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 29; -- Chùa Trấn Quốc
+UPDATE DIA_DIEM SET diem_gia_tri = 4.5 WHERE id = 30; -- Nhà thờ Lớn Hà Nội
 
-
+-- Thêm 3 cột
+ALTER TABLE DIA_DIEM
+ADD thong_tin_chi_tiet NVARCHAR(MAX),
+    review NVARCHAR(MAX),
+    phu_hop NVARCHAR(255);
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- TTTM cao cấp 6 tầng kết hợp đài quan sát Sky Walk, siêu thị Lotte Mart, rạp phim & ẩm thực cao cấp. Không gian hiện đại, sang trọng.',
+    phu_hop = N'Mua sắm hàng hiệu, hẹn hò, vui chơi gia đình cuối tuần.',
+    review = N'Không gian sang trọng, dịch vụ chuyên nghiệp, đài quan sát view đẹp. Giá cả thuộc phân khúc cao.'
+WHERE id = 1;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Tổ hợp mua sắm 3 tòa tháp, tích hợp rạp CGV, chuỗi thời trang phổ thông (Zara, Mango...) & khu ẩm thực sầm uất nội đô.',
+    phu_hop = N'Mua sắm thời trang, xem phim, ăn uống, gặp gỡ bạn bè.',
+    review = N'Vị trí trung tâm tiện di chuyển, thương hiệu đa dạng. Hầm gửi xe đông và việc di chuyển giữa các tháp hơi tốn thời gian.'
+WHERE id = 2;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- TTTM hạng sang phong cách Pháp cổ điển cạnh Hồ Gươm. Tập trung các gian hàng xa xỉ thế giới (Louis Vuitton, Dior...) & rạp CGV.',
+    phu_hop = N'Mua sắm đồ hiệu cao cấp, dạo phố cổ, check-in kiến trúc.',
+    review = N'Kiến trúc lộng lẫy, không gian yên tĩnh và đẳng cấp. Chủ yếu dành cho khách mua sắm phân khúc cao hoặc chụp ảnh.'
+WHERE id = 3;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- TTTM ngầm quy mô lớn nhất Hà Nội. Tích hợp sân trượt băng trong nhà, khu Heroworld, rạp phim & phố ẩm thực khép kín.',
+    phu_hop = N'Vui chơi giải trí nhóm đông/gia đình cả ngày, trượt băng.',
+    review = N'Đa dạng dịch vụ giải trí và ăn uống. Diện tích quá rộng nên rất dễ bị lạc đường và mất thời gian tìm xe dưới hầm.'
+WHERE id = 4;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- TTTM phong cách Nhật Bản diện tích lớn, gồm siêu thị thực phẩm, làng ẩm thực Nhật-Việt, rạp CGV & bãi đỗ xe miễn phí.',
+    phu_hop = N'Mua sắm gia đình cuối tuần, trải nghiệm ẩm thực, dã ngoại mua sắm.',
+    review = N'Dịch vụ chuẩn Nhật rất chu đáo, tiện nghi sạch sẽ, bãi xe rộng miễn phí. Ngày lễ/cuối tuần thường cực kỳ đông.'
+WHERE id = 5;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Mô hình quán ăn bình dân gia truyền từ 1954. Phục vụ phở bò nước dùng thanh trong. Diện tích chật hẹp đặc trưng phố cổ.',
+    phu_hop = N'Ăn sáng/tối nhanh, trải nghiệm ẩm thực Hà Nội xưa.',
+    review = N'Nước dùng thanh ngọt chuẩn vị truyền thống, thịt bò tươi ngon. Chỗ ngồi hẹp, giờ cao điểm phải xếp hàng và ngồi ghép.'
+WHERE id = 6;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Mô hình quán ăn 3 tầng có điều hòa. Phục vụ bún chả nướng than & nem hải sản theo quy trình dây chuyền nhanh chóng.',
+    phu_hop = N'Du lịch trải nghiệm địa điểm nổi tiếng, ăn trưa văn phòng.',
+    review = N'Bún chả đậm đà, suất ăn đầy đặn. Đông khách du lịch nên không gian khá ồn ào, chất lượng phục vụ ở mức trung bình.'
+WHERE id = 7;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Nhà hàng ẩm thực diện tích rộng ven Hồ Trúc Bạch & Hồ Tây. Phục vụ bánh tôm chiên giòn & đặc sản Hà Nội trong không gian mở.',
+    phu_hop = N'Tụ tập gia đình, đón tiếp khách du lịch, ăn uống ngắm cảnh hồ.',
+    review = N'Vị trí đẹp, không gian thoáng mát nhìn ra hồ. Chất lượng món ăn và thái độ phục vụ chưa thực sự đồng đều.'
+WHERE id = 8;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Chuỗi nhà hàng hiện đại trang bị hệ thống hút mùi tại bàn. Phục vụ chả cá lăng chiên chảo nóng ăn kèm bún, thì là, mắm tôm.',
+    phu_hop = N'Tiếp đối tác, họp mặt gia đình, ăn uống nhóm đông lịch sự.',
+    review = N'Chả cá tươi ngon, mắm tôm vừa vị, không gian không bị ám mùi mỡ. Mức giá thuộc phân khúc tầm trung - khá.'
+WHERE id = 9;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Quán ăn bình dân nằm trong ngõ nhỏ phố cổ. Phục vụ mẹt bún đậu chiên giòn, chả cốm, thịt chân giò luộc & giả cầy.',
+    phu_hop = N'Ăn trưa nhanh, trải nghiệm ẩm thực ngõ ngách Hà Nội.',
+    review = N'Đậu rán giòn nóng hổi, mắm tôm thơm đậm đà. Quán nhỏ nằm trong ngõ nên chỗ ngồi khá chật chội vào giờ trưa.'
+WHERE id = 10;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Quán ăn bình dân 2–3 tầng sạch sẽ tại làng ẩm thực Ngũ Xã. Phục vụ phở cuốn bò xào, phở chiên phồng & phở chiên trứng.',
+    phu_hop = N'Tụ tập bạn bè, ăn trưa/tối, đổi vị món ăn nhẹ nhàng.',
+    review = N'Phở cuốn tươi ngon, phở chiên phồng sốt bò đậm đà. Phục vụ nhanh nhẹn dù quán thường xuyên đông khách.'
+WHERE id = 11;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Quán ăn vặt vỉa hè phố cổ (ngồi ghế nhựa). Phục vụ nộm bò khô, bánh bột lọc, nem chua bọc sương & chim quay.',
+    phu_hop = N'Ăn vặt chiều/tối, dạo phố Bờ Hồ, trải nghiệm văn hóa vỉa hè.',
+    review = N'Nộm đậm đà, topping bò khô phong phú, nước trộn vừa vị. Trải nghiệm ngồi vỉa hè ngắm phố xá rất thú vị.'
+WHERE id = 12;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Tiệm bánh mì bình dân không gian chật hẹp/vỉa hè. Phục vụ bánh mì sốt vang bò gân mềm, nước sốt sánh đặc đậm vị.',
+    phu_hop = N'Ăn sáng/trưa/tối nhanh, ăn ấm bụng ngày lạnh.',
+    review = N'Sốt vang sánh đặc thơm mùi ngũ vị, thịt bò mềm dẻo. Chỗ ngồi chật và giá nhỉnh hơn mặt bằng chung bánh mì.'
+WHERE id = 13;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Quán ăn gia đình nhỏ thuộc danh sách Michelin Selected. Phục vụ miến lươn nước/trộn (lươn chiên giòn hoặc lươn mềm).',
+    phu_hop = N'Ăn sáng/trưa/tối thanh nhẹ, trải nghiệm ẩm thực chuẩn Michelin.',
+    review = N'Lươn giòn không bị hôi, nước hầm ngọt thanh từ xương lươn. Không gian diện tích nhỏ nhưng sạch sẽ.'
+WHERE id = 14;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Quán xôi quy mô 3 tầng, phục vụ theo mô hình công nghiệp nhanh chóng. Menu gồm xôi xéo/ngô ăn kèm đa dạng topping (thịt kho, pate, trứng...).',
+    phu_hop = N'Ăn nhanh no lâu, ăn sáng, ăn đêm muộn.',
+    review = N'Xôi dẻo thơm, topping đậm đà phong phú, phục vụ cực nhanh. Mức giá khá cao so với mặt bằng xôi thông thường.'
+WHERE id = 15;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian yên tĩnh, ít người, mang nét kiến trúc Pháp cổ điển, quán rất chill.',
+    phu_hop = N'Làm việc hoặc trò chuyện tâm tình.',
+    review = N'Không gian biệt thự Pháp cổ vintage, yên tĩnh. Cà phê quế và cà phê trứng ngon (hơi ngọt). Giá nhỉnh hơn mặt bằng chung, thích hợp làm việc hoặc tâm sự.'
+WHERE id = 16;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian ấm cúng, yên tĩnh và ít người.',
+    phu_hop = N'Tập trung làm việc hoặc có những buổi hẹn hò nhẹ nhàng.',
+    review = N'Không gian ấm cúng, lý tưởng để làm việc hay hẹn hò. Nhân viên cực kỳ chu đáo. Menu ngon, nổi bật là món Cold Brew Sấu thanh mát.'
+WHERE id = 17;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Quán cà phê truyền thống nổi tiếng, không gian sôi động và đông đúc.',
+    phu_hop = N'Trải nghiệm văn hóa phố cổ.',
+    review = N'Quán lâu đời, nổi tiếng nhất với cà phê trứng béo ngậy không tanh. Không gian đậm chất Hà Nội xưa nhưng hơi chật chội và đông đúc. Phục vụ nhanh.'
+WHERE id = 18;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian ấm cúng, có khu vực vỉa hè ngồi rất chill dù diện tích hơi nhỏ.',
+    phu_hop = N'Ngắm view phố cổ nhộn nhịp.',
+    review = N'Quán ấm cúng, ngồi vỉa hè ngắm phố cực chill, nhạc hay, bạc sỉu ngon. Nhược điểm là bên trong nhỏ, ồn ào lúc đông khách và giá hơi cao.'
+WHERE id = 19;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian yên tĩnh, ít người, có độ riêng tư cao.',
+    phu_hop = N'Tập trung làm việc, học tập với cà phê pha máy chuyên sâu.',
+    review = N'Cà phê pha máy cực ngon. Không gian yên tĩnh, riêng tư, rất lý tưởng để tập trung làm việc hay học bài. Nhân viên thân thiện, vỉa hè thoáng mát.'
+WHERE id = 20;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian sôi động, nhộn nhịp và đông đúc. Có view đẹp ngắm phố.',
+    phu_hop = N'Check-in, vui chơi và dạo phố.',
+    review = N'Trà Ô Long đậm vị, không gian phố cổ chill. Tuy nhiên, thời gian lên đồ siêu lâu, nhân viên đôi lúc thiếu nhiệt tình và khâu dọn vệ sinh bàn chưa tốt.'
+WHERE id = 21;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian mang nét cổ điển, hoài niệm với view ban công ngắm phố cực đẹp, khá yên tĩnh.',
+    phu_hop = N'Tâm sự nhẹ nhàng.',
+    review = N'Vibe biệt thự Pháp cổ xinh xắn, có ban công ngắm phố rất tuyệt. Nhân viên nhiệt tình. Điểm trừ là chất lượng món ăn chưa đồng đều, có tính VAT.'
+WHERE id = 22;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Nằm trong ngõ nhỏ yên tĩnh, ít người. Không gian ngoài trời thoáng đãng, mang lại cảm giác vô cùng chill.',
+    phu_hop = N'Thư giãn, tìm không gian yên bình.',
+    review = N'Nằm trong ngõ nhỏ, thiết kế mở thoáng đãng, yên tĩnh. Đồ uống chuẩn vị, nhân viên khéo léo chu đáo. Quán hay đông khách và giá nước hơi cao.'
+WHERE id = 23;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian yên tĩnh, thanh lịch.',
+    phu_hop = N'Cắm cúi làm việc hoặc có những cuộc trò chuyện riêng tư.',
+    review = N'Không gian đẹp, yên tĩnh, dễ trò chuyện hay làm việc. Menu đồ uống ít nhưng cà phê rất đậm vị. Đồ ăn nhẹ và dịch vụ đều được đánh giá cao.'
+WHERE id = 24;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Không gian rộng rãi, yên tĩnh với thiết kế tối giản, hiện đại.',
+    phu_hop = N'Làm không gian làm việc trong ngày, bàn công việc.',
+    review = N'Quán rộng rãi, yên tĩnh, gần văn phòng nên thích hợp bàn công việc. Nhân viên và chủ quán dễ mến. Cà phê pha chế ở mức ổn, tròn vai.'
+WHERE id = 25;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Di tích lịch sử và tâm linh nổi tiếng. Không gian ngoài trời thoáng đãng, nhiều cây xanh.',
+    phu_hop = N'Tham quan, ngắm cảnh Hồ Gươm.',
+    review = N'Di tích biểu tượng giữa Hồ Gươm, không gian xanh mát. Cầu Thê Húc, Tháp Bút là điểm check-in không thể bỏ lỡ. Vé vào cửa 50k, rất đáng trải nghiệm.'
+WHERE id = 26;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Địa điểm lịch sử trang nghiêm, thiêng liêng. Không gian ngoài trời vô cùng rộng lớn, quy củ và nhiều cây xanh mát.',
+    phu_hop = N'Tham quan lịch sử, viếng thăm.',
+    review = N'Biểu tượng thiêng liêng tại Quảng trường Ba Đình. Khuôn viên quy củ, rộng lớn. Cần đi sớm, mặc lịch sự và tuân thủ xếp hàng để vào viếng bên trong.'
+WHERE id = 27;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Di tích lịch sử, không gian văn hóa giáo dục truyền thống. Khuôn viên ngoài trời cổ kính, rộng rãi, nhiều cây xanh.',
+    phu_hop = N'Tìm hiểu văn hóa, giáo dục và thư giãn.',
+    review = N'Trường đại học đầu tiên với kiến trúc cổ kính, thư thái. Thường rất đông khách du lịch, khâu mua vé có lúc chậm. Có nhiều sự kiện văn hoá hay.'
+WHERE id = 28;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Địa điểm tâm linh cổ kính, linh thiêng bậc nhất. Sở hữu view nhìn ra mặt nước Hồ Tây yên bình và tĩnh lặng.',
+    phu_hop = N'Đi lễ, vãn cảnh và tìm sự thanh tịnh.',
+    review = N'Ngôi chùa cổ linh thiêng bên Hồ Tây với cảnh quan bình yên, kiến trúc bảo tháp độc đáo. Khách đến viếng cần ăn mặc kín đáo, lịch sự.'
+WHERE id = 29;
+
+UPDATE DIA_DIEM SET 
+    thong_tin_chi_tiet = N'- Biểu tượng kiến trúc mang phong cách Gothic. Không gian ngoài trời sôi động, nhộn nhịp.',
+    phu_hop = N'Check-in chụp ảnh, dạo phố, tụ tập bạn bè.',
+    review = N'Biểu tượng kiến trúc uy nghiêm giữa lòng thủ đô. Xung quanh nhộn nhịp trà chanh, quán xá. Buổi tối lên đèn cực kỳ lộng lẫy và sôi động.'
+WHERE id = 30;
