@@ -92,3 +92,13 @@ html, body {
 }
 
 .timeline-ui li:last-child { border: 0; padding-bottom: 0; }
+/* Hiệu ứng nổi Card khi hover */
+.emotion-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 1rem 3rem rgba(0,0,0,0.15) !important;
+}
+
+/* Tùy chỉnh lớp phủ màn hình chọn lộ trình */
+#emotion-cards-overlay {
+    background: linear-gradient(135deg, #fdfbf7 0%, #f7f5f0 100%) !important;
+}

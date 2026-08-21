@@ -52,7 +52,26 @@
                         </div>
                     </div>
                 </div>
-
+                <!-- COPY TỪ ĐÂY CHÈN VÀO -->
+                <div class="card mb-4 shadow-sm">
+                    <div class="card-header bg-custom text-white">
+                        <i class="fa-solid fa-heart"></i> Mong muốn chuyến đi
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label" style="font-size: 0.85rem;">Bạn thích không gian như thế nào?</label>
+                            <textarea id="user_preference" class="form-control form-control-sm" rows="2" placeholder="VD: Quán cafe nhiều cây cối, yên tĩnh, view đẹp..."></textarea>
+                        </div>
+                        <div>
+                            <label class="form-label d-flex justify-content-between text-muted" style="font-size: 0.75rem;">
+                                <span>⚡ Ưu tiên thời gian (Đi gần)</span>
+                                <span>💎 Ưu tiên trải nghiệm (Đúng gu)</span>
+                            </label>
+                            <input type="range" class="form-range" id="preference_weight" min="0" max="100" step="10" value="50">
+                        </div>
+                    </div>
+                </div>
+                <!-- KẾT THÚC ĐOẠN COPY -->
                 <div class="card mb-4 shadow-sm">
                     <div class="card-header bg-custom text-white">
                         <i class="fa-regular fa-clock"></i> Khung thời gian (Time-Window)
@@ -91,10 +110,19 @@
             <!-- PANEL BÊN PHẢI -->
             <div class="col-md-8 col-lg-9 p-0 main-view position-relative">
                 <div id="map" class="h-100 w-100"></div>
+                <!-- COPY TỪ ĐÂY CHÈN VÀO -->
+                <div id="emotion-cards-overlay" class="position-absolute top-0 start-0 w-100 h-100 bg-light d-none" style="z-index: 999; overflow-y: auto; padding: 30px;">
+                    <h3 class="text-center brand-title mb-4">✨ Chọn Trải Nghiệm Của Bạn</h3>
+                    <div class="row g-4" id="cards-container">
+                        <!-- JS sẽ render các Card vào đây -->
+                    </div>
+                </div>
+                <!-- KẾT THÚC ĐOẠN COPY -->
                 
                 <div id="result-panel" class="card shadow result-card fade-in d-none">
                     <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center">
                         <span><i class="fa-solid fa-timeline"></i> Đề Xuất Lộ Trình</span>
+                        <button id="btn-back-cards" class="btn btn-sm btn-outline-light"><i class="fa-solid fa-arrow-left"></i> Chọn lại</button>
                     </div>
                     <div class="card-body">
                         <select id="route_selector" class="form-select form-select-sm mb-3 shadow-sm font-weight-bold" style="border-color: #d87c4f;"></select>
@@ -112,4 +140,4 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="app.js"></script>
 </body>
-</html>
+</html> 
