@@ -14,7 +14,7 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-SERVER   = os.getenv("DB_SERVER",   r'DESKTOP-I8NIUKA\SQLEXPRESS05')
+SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
 DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
 
 

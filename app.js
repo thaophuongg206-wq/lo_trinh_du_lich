@@ -111,11 +111,10 @@ $(document).ready(function () {
             end_time: $('#end_time').val(),
             trip_date: $('#trip_date').val(),
             vehicle_type: $('#vehicle_type').val(),
+            user_preference: $('#user_preference').val(),
+            weight: $('#preference_weight').val()
         };
 
-        // ================================================================
-        // KIỂM TRA: Bắt buộc phải có điểm xuất phát
-        // ================================================================
         if (!currentLocationData && !startPointText) {
             $('#location-status').html('<span class="text-danger"><i class="fa-solid fa-circle-xmark"></i> Vui lòng nhập điểm xuất phát hoặc bấm 🎯 Định vị!</span>');
             $('#start_point').addClass('is-invalid').focus();
@@ -172,7 +171,6 @@ $(document).ready(function () {
                         $('#location-status').html('<span class="text-success"><i class="fa-solid fa-circle-check"></i> Đã định vị địa chỉ!</span>');
                         sendOptimizeRequest(payload, $btn);
                     } else {
-                        // Nếu geocode không tìm thấy địa chỉ cụ thể trên bản đồ -> gửi tên địa điểm để Backend tìm trong Database
                         $('#location-status').html('<span class="text-info"><i class="fa-solid fa-info-circle"></i> Tìm theo tên địa điểm trong DB...</span>');
                         payload.start_point = startPointText;
                         sendOptimizeRequest(payload, $btn);
@@ -206,14 +204,60 @@ $(document).ready(function () {
                     }
 
                     const $selector = $('#route_selector').empty();
-                    generatedRoutes.forEach((route, index) => {
-                        const numPoints = route.optimized_route.length;
-                        const strategy = route.strategy || `Lộ trình ${index + 1}`;
-                        $selector.append(`<option value="${index}">${strategy} — ${numPoints} điểm · ${route.total_time_minutes} phút</option>`);
-                    });
+                    $('#emotion-cards-overlay').removeClass('d-none'); 
+                    $('#result-panel').addClass('d-none');             
+                    const $container = $('#cards-container').empty();
 
-                    $('#result-panel').removeClass('d-none');
-                    renderSelectedRoute(0);
+                    const emotionTags = [
+                        "Hơi thở thiên nhiên & Sống chậm",
+                        "Không gian hoài niệm & Chữa lành",
+                        "Khám phá góc phố & Check-in",
+                        "Trải nghiệm trọn vẹn nhịp sống đô thị"
+                    ];
+
+                    const retroImages = [
+                        "https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=300&q=80",
+                        "https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=300&q=80",
+                        "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=300&q=80"
+                    ];
+
+                    generatedRoutes.forEach((route, index) => {
+                        // Tự động đánh số lộ trình theo thứ tự mảng trả về
+                        const title = `Lộ trình ${index + 1}: ${emotionTags[index % emotionTags.length]}`;
+                        const time = route.total_time_minutes;
+                        const numPoints = route.optimized_route.length;
+                        
+                        // 1. Gắn tên cảm xúc vào Dropdown
+                        $selector.append(`<option value="${index}">${title} — ${numPoints} điểm · ${time} phút</option>`);
+                        
+                        // 2. Lấy tên 3 địa điểm đầu tiên làm tóm tắt
+                        let summarySpots = route.optimized_route.map(p => p.ten).slice(0, 3).join(" ➔ ");
+                        if(numPoints > 3) summarySpots += " ...";
+                        
+                        // 3. Render Card với thiết kế 3 ảnh ghép
+                        $container.append(`
+                            <div class="col-md-6 mb-3">
+                                <div class="card h-100 shadow-sm emotion-card border-0 rounded-4 overflow-hidden" data-index="${index}" style="cursor: pointer;">
+                                    <div class="d-flex" style="height: 140px;">
+                                        <img src="${retroImages[0]}" style="width: 33.33%; object-fit: cover;" alt="Điểm 1">
+                                        <img src="${retroImages[1]}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 2">
+                                        <img src="${retroImages[2]}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 3">
+                                    </div>
+                                    <div class="card-body p-3 bg-white">
+                                        <h6 class="card-title fw-bold text-dark mb-2">${title}</h6>
+                                        <p class="card-text text-muted mb-2" style="font-size: 0.8rem;">
+                                            <i class="fa-solid fa-map-pin text-danger me-1"></i> ${summarySpots}
+                                        </p>
+                                        <div class="d-flex justify-content-between align-items-center mt-3">
+                                            <span class="badge bg-light text-dark border"><i class="fa-regular fa-clock"></i> ${time} phút</span>
+                                            <span class="text-warning" style="font-size: 0.85rem; font-weight: 500;">Chi tiết &rarr;</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `);
+                    }); // 
+
                 } else {
                     alert(res.message);
                 }
@@ -237,7 +281,6 @@ $(document).ready(function () {
         const routeData = generatedRoutes[index];
         const $timeline = $('#timeline-list').empty();
 
-        // Hiển thị giờ bắt đầu / kết thúc thực tế
         const firstPoint = routeData.optimized_route[0];
         const lastPoint  = routeData.optimized_route[routeData.optimized_route.length - 1];
         const startStr   = firstPoint ? firstPoint.arrive_time : '--:--';
@@ -326,8 +369,22 @@ $(document).ready(function () {
                 popupAnchor: [0, -12]
             });
 
+            // Giao diện Popup mới có kèm hình ảnh
+            const pointImg = "https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=400&q=80";
+            const popupContent = `
+                <div style="min-width: 240px;">
+                    <img src="${pointImg}" style="width: 100%; height: 110px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">
+                    <h6 class="fw-bold mb-1" style="color: #d87c4f;">📍 ${idx + 1}. ${loc.ten}</h6>
+                    <hr class="my-1">
+                    <p class="mb-2" style="font-size: 0.85rem;">${loc.thong_tin_chi_tiet || 'Chi tiết đang cập nhật...'}</p>
+                    <div class="bg-light p-2 rounded border" style="font-size: 0.8rem; font-style: italic; border-left: 3px solid #d87c4f !important;">
+                        <i class="fa-solid fa-quote-left text-muted"></i> ${loc.review || 'Chưa có đánh giá.'}
+                    </div>
+                </div>
+            `;
+
             const marker = L.marker([loc.lat, loc.lon], {icon: customIcon})
-                            .bindPopup(`<b>Điểm ${idx + 1}: ${loc.ten}</b>`)
+                            .bindPopup(popupContent)
                             .addTo(map);
             mapMarkers.push(marker);
         });
@@ -356,4 +413,25 @@ $(document).ready(function () {
             });
         }
     }
+
+    $(document).on('click', '.emotion-card', function() {
+        const selectedIndex = $(this).data('index');
+        
+        $('#emotion-cards-overlay').addClass('d-none');
+        $('#result-panel').removeClass('d-none');
+        
+        $('#route_selector').val(selectedIndex);
+        renderSelectedRoute(selectedIndex); 
+    });
+
+    $(document).on('mouseenter', '.emotion-card', function() {
+        $(this).css({'transform': 'translateY(-5px)', 'border-color': '#d87c4f', 'transition': 'all 0.2s'});
+    }).on('mouseleave', '.emotion-card', function() {
+        $(this).css({'transform': 'translateY(0)', 'border-color': 'transparent'});
+    });
+    // Sự kiện nút Quay lại màn hình Card
+    $(document).on('click', '#btn-back-cards', function() {
+        $('#result-panel').addClass('d-none');
+        $('#emotion-cards-overlay').removeClass('d-none');
+    });
 });
