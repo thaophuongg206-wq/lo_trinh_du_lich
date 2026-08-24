@@ -14,23 +14,38 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
-DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
+import sqlite3
 
+SERVER   = os.getenv("DB_SERVER",   r'DESKTOP-I8NIUKA\SQLEXPRESS05')
+DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
+SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
 
 def get_db_connection():
-    return pyodbc.connect(
-        f'DRIVER={{ODBC Driver 17 for SQL Server}};'
-        f'SERVER={SERVER};'
-        f'DATABASE={DATABASE};'
-        f'Trusted_Connection=yes;'
-        f'TrustServerCertificate=yes;'
-    )
+    """
+    Thử kết nối SQL Server trước.
+    Nếu thất bại (máy bạn bè chưa cài SQL Server), tự động dùng SQLite dulich.db có sẵn trong Git.
+    """
+    try:
+        conn = pyodbc.connect(
+            f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+            f'SERVER={SERVER};'
+            f'DATABASE={DATABASE};'
+            f'Trusted_Connection=yes;'
+            f'TrustServerCertificate=yes;',
+            timeout=2
+        )
+        return conn, "sqlserver"
+    except Exception:
+        conn = sqlite3.connect(SQLITE_DB)
+        conn.row_factory = sqlite3.Row
+        return conn, "sqlite"
 
-
-
-
-
+def fetch_all_dict(cursor, db_type):
+    if db_type == "sqlite":
+        return [dict(r) for r in cursor.fetchall()]
+    else:
+        cols = [col[0] for col in cursor.description]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
 class OptimizationRequest(BaseModel):
@@ -46,12 +61,13 @@ class OptimizationRequest(BaseModel):
 @app.get("/api/locations")
 def get_locations():
     try:
-        conn = get_db_connection()
+        conn, db_type = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh FROM DIA_DIEM")
-        locations = [{"id": str(r.id), "ten": r.ten, "lat": r.vi_do, "lon": r.kinh_do, "loai_hinh": r.loai_hinh} for r in cursor.fetchall()]
+        rows = fetch_all_dict(cursor, db_type)
+        locations = [{"id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], "loai_hinh": r["loai_hinh"]} for r in rows]
         conn.close()
-        return {"status": "success", "data": locations}
+        return {"status": "success", "data": locations, "db_engine": db_type}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -76,6 +92,27 @@ def get_density_factor(start_time_str: str) -> float:
 
 # Danh sách các loại xe lớn bị hạn chế theo giờ
 LARGE_VEHICLE_TYPES = {"xe_16_cho", "xe_29_cho", "xe_45_cho"}
+
+# Cấp độ tiếp cận tối đa theo phương tiện
+# Cấp 1: bãi đỗ lớn, đường rộng (TTTM, di tích lớn) → tất cả xe
+# Cấp 2: đường chính, đỗ được xe con → xe máy + ô tô cá nhân
+# Cấp 3: hẻm/phố cổ hẹp, không bãi xe → chỉ xe máy, xe đạp, đi bộ
+VEHICLE_ACCESS_LEVEL = {
+    "xe_45_cho": 1,
+    "xe_29_cho": 1,
+    "xe_16_cho": 1,
+    "o_to":      2,
+    "xe_may":    3,
+    "xe_dap":    3,
+    "di_bo":     3,
+}
+
+VEHICLE_ACCESS_NOTE = {
+    "xe_45_cho": "Xe 45 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe lớn.",
+    "xe_29_cho": "Xe 29 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe lớn.",
+    "xe_16_cho": "Xe 16 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe lớn.",
+    "o_to":      "Ô tô: đã loại các địa điểm trong hẻm nhỏ không có chỗ đậu xe.",
+}
 
 def get_vehicle_osrm_profile(vehicle_type: str):
     """
@@ -253,33 +290,46 @@ async def optimize_route(request: OptimizationRequest):
         return {"status": "error", "message": "Lỗi định dạng thời gian"}
 
     # 3. LẤY DANH SÁCH ĐỊA ĐIỂM TỪ DATABASE
-    conn = get_db_connection()
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     query = """
         SELECT d.id, d.ten, d.vi_do, d.kinh_do, d.thoi_gian_tham_quan_phut, d.diem_gia_tri, d.loai_hinh,
-               c.gio_mo_cua, c.gio_dong_cua
+               c.gio_mo_cua, c.gio_dong_cua,
+               d.mo_ta, d.thong_tin_chi_tiet, d.review, d.phu_hop,
+               COALESCE(d.cap_do_tiep_can, 3) AS cap_do_tiep_can
         FROM DIA_DIEM d
         LEFT JOIN CUA_SO_THOI_GIAN c ON d.id = c.dia_diem_id
     """
     cursor.execute(query)
+    rows = fetch_all_dict(cursor, db_type)
+    conn.close()
     
     all_points = []
     default_open = datetime.strptime("00:00", "%H:%M").time()
     default_close = datetime.strptime("23:59", "%H:%M").time()
 
-    for r in cursor.fetchall():
-        open_time = r.gio_mo_cua if r.gio_mo_cua else default_open
-        close_time = r.gio_dong_cua if r.gio_dong_cua else default_close
+    for r in rows:
+        open_time = r["gio_mo_cua"] if r["gio_mo_cua"] else default_open
+        close_time = r["gio_dong_cua"] if r["gio_dong_cua"] else default_close
         
         if isinstance(open_time, str): open_time = datetime.strptime(open_time[:5], "%H:%M").time()
         if isinstance(close_time, str): close_time = datetime.strptime(close_time[:5], "%H:%M").time()
 
         all_points.append({
-            "id": str(r.id), "ten": r.ten, "lat": r.vi_do, "lon": r.kinh_do, 
-            "time": r.thoi_gian_tham_quan_phut, "score": r.diem_gia_tri, "loai_hinh": r.loai_hinh,
-            "open_time": open_time, "close_time": close_time
+            "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], 
+            "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
+            "open_time": open_time, "close_time": close_time,
+            "mo_ta": r["mo_ta"] or "",
+            "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
+            "review": r["review"] or "",
+            "phu_hop": r["phu_hop"] or "",
+            "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
         })
-    conn.close()
+
+    # 3b. LỌC ĐỊA ĐIỂM THEO KHẢ NĂNG TIẾP CẬN CỦA PHƯƠNG TIỆN
+    max_access = VEHICLE_ACCESS_LEVEL.get(request.vehicle_type, 3)
+    all_points = [p for p in all_points if p["cap_do_tiep_can"] <= max_access]
+    vehicle_note = VEHICLE_ACCESS_NOTE.get(request.vehicle_type, "")
 
     # 4. LẤY MA TRẬN KHOẢNG CÁCH THEO PHƯƠNG TIỆN (vehicle_type)
     global_matrix = get_global_osrm_matrix(all_points, vehicle_type=request.vehicle_type)
@@ -299,6 +349,7 @@ async def optimize_route(request: OptimizationRequest):
             "loai_hinh": "diem_xuat_phat",
             "open_time": default_open,
             "close_time": default_close,
+            "mo_ta": "", "thong_tin_chi_tiet": "", "review": "", "phu_hop": ""
         }
 
         all_points_with_gps = [gps_point] + all_points
@@ -351,7 +402,11 @@ async def optimize_route(request: OptimizationRequest):
             best_departure = departure
 
             for p in unvisited:
-                est_travel = (calc_dist(selected_points[-1], p) / 20.0) * 60 * k_total
+                # Ưu tiên dùng ma trận OSRM thực tế, fallback về ước tính nếu thiếu
+                try:
+                    est_travel = global_matrix[selected_points[-1]["id"]][p["id"]]["duration"]
+                except (KeyError, TypeError):
+                    est_travel = (calc_dist(selected_points[-1], p) / 20.0) * 60 * k_total
                 est_visit = p["time"] * k_dens
 
                 arrival = departure + timedelta(minutes=est_travel)
@@ -398,7 +453,9 @@ async def optimize_route(request: OptimizationRequest):
         )
 
         dropped_point = False
-        while (best_cost >= 10000 or best_cost > available_minutes) and len(best_route_indices) > 2:
+        # Chỉ drop khi vi phạm cứng (penalty >= 10000: vượt giờ đóng cửa hoặc hết giờ)
+        # KHÔNG drop vì best_cost > available_minutes vì cost tính gộp cả penalty làm tăng ảo
+        while best_cost >= 10000 and len(best_route_indices) > 2:
             start_id = selected_points[best_route_indices[0]]["id"]
             furthest_idx = max(
                 best_route_indices[1:],
@@ -441,6 +498,11 @@ async def optimize_route(request: OptimizationRequest):
             final_route_details.append({
                 "id": point["id"], "ten": point["ten"],
                 "lat": point["lat"], "lon": point["lon"],
+                "loai_hinh": point.get("loai_hinh", ""),
+                "mo_ta": point.get("mo_ta", ""),
+                "thong_tin_chi_tiet": point.get("thong_tin_chi_tiet", ""),
+                "review": point.get("review", ""),
+                "phu_hop": point.get("phu_hop", ""),
                 "visit_time": round(visit_time, 1),
                 "wait_time": round(wait_time, 1),
                 "arrive_time": arrive_time_str,
@@ -487,8 +549,12 @@ async def optimize_route(request: OptimizationRequest):
             best_score = float('inf')
             best_dep   = departure
             for p in unvisited:
-                dist       = calc_dist(selected[-1], p)
-                est_travel = (dist / 20.0) * 60 * k_total
+                dist = calc_dist(selected[-1], p)
+                # Ưu tiên dùng ma trận OSRM thực tế, fallback về ước tính nếu thiếu
+                try:
+                    est_travel = global_matrix[selected[-1]["id"]][p["id"]]["duration"]
+                except (KeyError, TypeError):
+                    est_travel = (dist / 20.0) * 60 * k_total
                 est_visit  = p["time"] * k_dens
                 arrival    = departure + timedelta(minutes=est_travel)
                 p_open     = datetime.combine(base_date, p["open_time"])
@@ -618,5 +684,7 @@ async def optimize_route(request: OptimizationRequest):
         "available_minutes": available_minutes,
         "trip_date": str(base_date),
         "vehicle_type": request.vehicle_type,
+        "vehicle_note": vehicle_note,
+        "accessible_locations_count": len(all_points),
         "routes": generated_routes
     }
