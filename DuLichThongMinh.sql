@@ -19,7 +19,11 @@ CREATE TABLE DIA_DIEM (
     loai_hinh NVARCHAR(100),
     diem_gia_tri FLOAT,
     thoi_gian_tham_quan_phut INT,
-    mo_ta NVARCHAR(MAX)
+    mo_ta NVARCHAR(MAX),
+    thong_tin_chi_tiet NVARCHAR(MAX),
+    review NVARCHAR(MAX),
+    phu_hop NVARCHAR(255),
+    cap_do_tiep_can INT DEFAULT 3
 );
 CREATE TABLE CUA_SO_THOI_GIAN (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -366,3 +370,21 @@ UPDATE DIA_DIEM SET
     phu_hop = N'Check-in chụp ảnh, dạo phố, tụ tập bạn bè.',
     review = N'Biểu tượng kiến trúc uy nghiêm giữa lòng thủ đô. Xung quanh nhộn nhịp trà chanh, quán xá. Buổi tối lên đèn cực kỳ lộng lẫy và sôi động.'
 WHERE id = 30;
+
+-- Cập nhật Cấp độ tiếp cận phương tiện (cap_do_tiep_can)
+-- Cấp 1: Xe lớn (16/29/45 chỗ), Ô tô, Xe máy (có bãi đỗ xe lớn, đường rộng)
+-- Cấp 2: Ô tô, Xe máy (đường chính, không đỗ được xe lớn)
+-- Cấp 3: Chỉ xe máy, xe đạp, đi bộ (ngõ/hẻm nhỏ, phố cổ chật hẹp)
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('DIA_DIEM') AND name = 'cap_do_tiep_can')
+BEGIN
+    ALTER TABLE DIA_DIEM ADD cap_do_tiep_can INT DEFAULT 3;
+END;
+
+-- Cấp 1 (Xe lớn được phép):
+UPDATE DIA_DIEM SET cap_do_tiep_can = 1 WHERE id IN (1, 2, 3, 4, 5, 27, 28, 29);
+
+-- Cấp 2 (Ô tô cá nhân):
+UPDATE DIA_DIEM SET cap_do_tiep_can = 2 WHERE id IN (6, 7, 8, 9, 11, 17, 20, 21, 23, 24, 25, 26, 30);
+
+-- Cấp 3 (Chỉ xe máy, xe đạp, đi bộ):
+UPDATE DIA_DIEM SET cap_do_tiep_can = 3 WHERE id IN (10, 12, 13, 14, 15, 16, 18, 19, 22);

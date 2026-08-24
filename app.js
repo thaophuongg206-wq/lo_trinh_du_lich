@@ -39,6 +39,22 @@ $(document).ready(function () {
         }
     });
 
+    // Hiển thị gợi ý/cảnh báo ngay khi chọn phương tiện
+    const vehicleNotes = {
+        'xe_45_cho': '<span class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> Xe 45 chỗ: Chỉ gợi ý các điểm có bãi đỗ xe lớn (TTTM, Di tích lớn).</span>',
+        'xe_29_cho': '<span class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> Xe 29 chỗ: Chỉ gợi ý các điểm có bãi đỗ xe lớn.</span>',
+        'xe_16_cho': '<span class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> Xe 16 chỗ: Chỉ gợi ý các điểm có bãi đỗ xe rộng.</span>',
+        'o_to': '<span class="text-info"><i class="fa-solid fa-info-circle"></i> Ô tô: Tự động loại các quán trong hẻm/ngõ hẹp.</span>',
+        'xe_may': '<span class="text-muted"><i class="fa-solid fa-check"></i> Xe máy: Đi được tất cả các địa điểm và ngõ ngách.</span>',
+        'xe_dap': '<span class="text-muted"><i class="fa-solid fa-check"></i> Xe đạp: Đi được tất cả các địa điểm.</span>',
+        'di_bo': '<span class="text-muted"><i class="fa-solid fa-person-walking"></i> Đi bộ: Thích hợp khám phá khu vực gần.</span>'
+    };
+
+    $('#vehicle_type').on('change', function() {
+        const vType = $(this).val();
+        $('#vehicle-hint').html(vehicleNotes[vType] || '');
+    }).trigger('change');
+
     // ================================================================
     // NÚT 📍 "Dùng vị trí hiện tại" → gọi GPS trình duyệt
     // ================================================================
@@ -201,6 +217,21 @@ $(document).ready(function () {
                     if (generatedRoutes.length === 0) {
                         alert("Quỹ thời gian của bạn quá ngắn để thực hiện chuyến đi này!");
                         return;
+                    }
+
+                    // Hiển thị thông báo xe lớn nếu có
+                    $('#vehicle-note-banner').remove();
+                    if (res.vehicle_note) {
+                        const count = res.accessible_locations_count || 0;
+                        const banner = `
+                            <div id="vehicle-note-banner" class="alert alert-warning py-2 px-3 mb-2 d-flex align-items-start gap-2" style="font-size:0.82rem; border-left: 4px solid #f0a500;">
+                                <i class="fa-solid fa-triangle-exclamation mt-1 text-warning"></i>
+                                <div>
+                                    <strong>Lưu ý phương tiện:</strong> ${res.vehicle_note}
+                                    <br><span class="text-muted">Tìm thấy <strong>${count}</strong> địa điểm phù hợp.</span>
+                                </div>
+                            </div>`;
+                        $('#emotion-cards-overlay').prepend(banner);
                     }
 
                     const $selector = $('#route_selector').empty();
@@ -369,17 +400,43 @@ $(document).ready(function () {
                 popupAnchor: [0, -12]
             });
 
-            // Giao diện Popup mới có kèm hình ảnh
-            const pointImg = "https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=400&q=80";
+            // Giao diện Popup chi tiết địa điểm
+            const loaiHinhBadge = loc.loai_hinh
+                ? `<span class="badge mb-2" style="background:#d87c4f; font-size:0.75rem;">${loc.loai_hinh}</span>`
+                : '';
+
+            const chiTietHtml = loc.thong_tin_chi_tiet
+                ? `<p class="mb-2" style="font-size: 0.82rem; color:#444;">${loc.thong_tin_chi_tiet}</p>`
+                : (loc.mo_ta ? `<p class="mb-2" style="font-size: 0.82rem; color:#666;">${loc.mo_ta}</p>` : '');
+
+            const phuHopHtml = loc.phu_hop
+                ? `<div class="mb-2" style="font-size: 0.8rem;">
+                       <i class="fa-solid fa-heart text-danger me-1"></i>
+                       <strong>Phù hợp:</strong> ${loc.phu_hop}
+                   </div>`
+                : '';
+
+            const reviewHtml = loc.review
+                ? `<div class="bg-light p-2 rounded border" style="font-size: 0.8rem; font-style: italic; border-left: 3px solid #d87c4f !important;">
+                       <i class="fa-solid fa-quote-left text-muted"></i> ${loc.review}
+                   </div>`
+                : '';
+
+            const timeHtml = `<div class="mb-2" style="font-size: 0.8rem; color:#555;">
+                <i class="fa-regular fa-clock me-1"></i> Tham quan: <strong>${loc.visit_time} phút</strong>
+                &nbsp;|&nbsp; <i class="fa-solid fa-door-open me-1"></i>
+                ${loc.arrive_time} – ${loc.depart_time}
+            </div>`;
+
             const popupContent = `
-                <div style="min-width: 240px;">
-                    <img src="${pointImg}" style="width: 100%; height: 110px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">
+                <div style="min-width: 260px; max-width: 300px;">
                     <h6 class="fw-bold mb-1" style="color: #d87c4f;">📍 ${idx + 1}. ${loc.ten}</h6>
+                    ${loaiHinhBadge}
                     <hr class="my-1">
-                    <p class="mb-2" style="font-size: 0.85rem;">${loc.thong_tin_chi_tiet || 'Chi tiết đang cập nhật...'}</p>
-                    <div class="bg-light p-2 rounded border" style="font-size: 0.8rem; font-style: italic; border-left: 3px solid #d87c4f !important;">
-                        <i class="fa-solid fa-quote-left text-muted"></i> ${loc.review || 'Chưa có đánh giá.'}
-                    </div>
+                    ${timeHtml}
+                    ${chiTietHtml}
+                    ${phuHopHtml}
+                    ${reviewHtml}
                 </div>
             `;
 
