@@ -16,7 +16,7 @@ app.add_middleware(
 
 import sqlite3
 
-SERVER   = os.getenv("DB_SERVER",   r'DESKTOP-I8NIUKA\SQLEXPRESS05')
+SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
 DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
 SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
 

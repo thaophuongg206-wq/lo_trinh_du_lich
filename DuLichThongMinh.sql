@@ -186,10 +186,7 @@ UPDATE DIA_DIEM SET diem_gia_tri = 4.4 WHERE id = 29; -- Chùa Trấn Quốc
 UPDATE DIA_DIEM SET diem_gia_tri = 4.5 WHERE id = 30; -- Nhà thờ Lớn Hà Nội
 
 -- Thêm 3 cột
-ALTER TABLE DIA_DIEM
-ADD thong_tin_chi_tiet NVARCHAR(MAX),
-    review NVARCHAR(MAX),
-    phu_hop NVARCHAR(255);
+
 
 UPDATE DIA_DIEM SET 
     thong_tin_chi_tiet = N'- TTTM cao cấp 6 tầng kết hợp đài quan sát Sky Walk, siêu thị Lotte Mart, rạp phim & ẩm thực cao cấp. Không gian hiện đại, sang trọng.',
