@@ -2,8 +2,6 @@
 CREATE DATABASE DuLichThongMinh;
 USE DuLichThongMinh;
 
--- Tạo Bảng
-
 CREATE TABLE NGUOI_DUNG (
     id INT IDENTITY(1,1) PRIMARY KEY,
     ho_ten NVARCHAR(50) NOT NULL,
