@@ -9,12 +9,13 @@ $(document).ready(function () {
     let originalLocations = [];
     let generatedRoutes = []; 
     let availableMinutes = 0;
-    let currentLocationMarker = null;  
-    let currentLocationData = null;    
+    let currentLocationMarker = null;  // Marker vị trí hiện tại của người dùng (GPS hoặc Geocode địa chỉ)
+    let currentLocationData = null;    // { lat, lon } nếu dùng GPS
 
+    // Tự động set ngày hôm nay + chặn không cho chọn ngày quá khứ
     const today = new Date().toISOString().split('T')[0];
     $('#trip_date').val(today);
-    $('#trip_date').attr('min', today);  
+    $('#trip_date').attr('min', today);  // Ngày tối thiểu = hôm nay
 
     $.ajax({
         url: 'http://127.0.0.1:8000/api/locations',
@@ -26,6 +27,7 @@ $(document).ready(function () {
         }
     });
 
+    // Reset GPS data nếu người dùng chủ động gõ chữ lại vào input
     $('#start_point').on('input', function() {
         if (currentLocationData && !$(this).val().startsWith('📍')) {
             currentLocationData = null;
@@ -37,6 +39,7 @@ $(document).ready(function () {
         }
     });
 
+    // Hiển thị gợi ý/cảnh báo ngay khi chọn phương tiện
     const vehicleNotes = {
         'xe_45_cho': '<span class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> Xe 45 chỗ: Chỉ gợi ý các điểm có bãi đỗ xe lớn (TTTM, Di tích lớn).</span>',
         'xe_29_cho': '<span class="text-warning"><i class="fa-solid fa-triangle-exclamation"></i> Xe 29 chỗ: Chỉ gợi ý các điểm có bãi đỗ xe lớn.</span>',
@@ -52,6 +55,9 @@ $(document).ready(function () {
         $('#vehicle-hint').html(vehicleNotes[vType] || '');
     }).trigger('change');
 
+    // ================================================================
+    // NÚT 📍 "Dùng vị trí hiện tại" → gọi GPS trình duyệt
+    // ================================================================
     $('#btn-use-location').on('click', function () {
         const $status = $('#location-status');
         const $btn = $(this);
@@ -73,7 +79,13 @@ $(document).ready(function () {
                 if (currentLocationMarker) map.removeLayer(currentLocationMarker);
 
                 const gpsIcon = L.divIcon({
-                    html: `<div style="background: #28a745; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 0 8px rgba(40,167,69,0.8); font-size: 14px;"><i class="fa-solid fa-location-dot"></i></div>`,
+                    html: `<div style="
+                        background: #28a745; color: white;
+                        border-radius: 50%; width: 28px; height: 28px;
+                        display: flex; align-items: center; justify-content: center;
+                        border: 3px solid white; box-shadow: 0 0 8px rgba(40,167,69,0.8);
+                        font-size: 14px;
+                    "><i class="fa-solid fa-location-dot"></i></div>`,
                     className: '', iconSize: [28, 28], iconAnchor: [14, 14]
                 });
 
@@ -99,6 +111,9 @@ $(document).ready(function () {
         );
     });
 
+    // ================================================================
+    // NÚT TÌM LỘ TRÌNH TỐI ƯU
+    // ================================================================
     $('#btn-optimize').on('click', function () {
         const $btn = $(this);
         const startPointText = $('#start_point').val().trim();
@@ -113,7 +128,7 @@ $(document).ready(function () {
             trip_date: $('#trip_date').val(),
             vehicle_type: $('#vehicle_type').val(),
             user_preference: $('#user_preference').val(),
-            weight: parseInt($('#preference_weight').val()) || 50
+            weight: $('#preference_weight').val()
         };
 
         if (!currentLocationData && !startPointText) {
@@ -130,6 +145,7 @@ $(document).ready(function () {
             payload.start_lon = currentLocationData.lon;
             payload.start_point = '';
             sendOptimizeRequest(payload, $btn);
+
         } else if (startPointText && !startPointText.startsWith('📍')) {
             $('#location-status').html('<span class="text-muted"><i class="fa-solid fa-spinner fa-spin"></i> Đang tìm tọa độ địa chỉ...</span>');
 
@@ -153,7 +169,13 @@ $(document).ready(function () {
 
                         if (currentLocationMarker) map.removeLayer(currentLocationMarker);
                         const addrIcon = L.divIcon({
-                            html: `<div style="background: #ff6b35; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 0 8px rgba(255,107,53,0.8); font-size: 14px;"><i class="fa-solid fa-location-dot"></i></div>`,
+                            html: `<div style="
+                                background: #ff6b35; color: white;
+                                border-radius: 50%; width: 28px; height: 28px;
+                                display: flex; align-items: center; justify-content: center;
+                                border: 3px solid white; box-shadow: 0 0 8px rgba(255,107,53,0.8);
+                                font-size: 14px;
+                            "><i class="fa-solid fa-location-dot"></i></div>`,
                             className: '', iconSize: [28, 28], iconAnchor: [14, 14]
                         });
 
@@ -192,6 +214,12 @@ $(document).ready(function () {
                     generatedRoutes = res.routes;
                     availableMinutes = res.available_minutes;
 
+                    if (generatedRoutes.length === 0) {
+                        alert("Quỹ thời gian của bạn quá ngắn để thực hiện chuyến đi này!");
+                        return;
+                    }
+
+                    // Hiển thị thông báo xe lớn nếu có
                     $('#vehicle-note-banner').remove();
                     if (res.vehicle_note) {
                         const count = res.accessible_locations_count || 0;
@@ -218,16 +246,21 @@ $(document).ready(function () {
                     ];
 
                     generatedRoutes.forEach((route, index) => {
-                        // FIX BUG 3: Sử dụng tên Route do Backend sinh thay vì Random mảng
-                        const title = `Lộ trình ${index + 1}: ${route.route_name || route.strategy}`;
+                        // BUG 3 FIX: tên lộ trình do Backend quyết định dựa trên đặc điểm
+                        // thực tế của route (route.route_name), KHÔNG còn xoay vòng qua một
+                        // mảng emotionTags cố định theo index. Frontend chỉ hiển thị.
+                        const title = `Lộ trình ${index + 1}: ${route.route_name || 'Lộ trình ' + (index + 1)}`;
                         const time = route.total_time_minutes;
                         const numPoints = route.optimized_route.length;
                         
+                        // 1. Gắn tên cảm xúc vào Dropdown
                         $selector.append(`<option value="${index}">${title} — ${numPoints} điểm · ${time} phút</option>`);
                         
+                        // 2. Lấy tên 3 địa điểm đầu tiên làm tóm tắt
                         let summarySpots = route.optimized_route.map(p => p.ten).slice(0, 3).join(" ➔ ");
                         if(numPoints > 3) summarySpots += " ...";
                         
+                        // 3. Render Card với thiết kế 3 ảnh ghép
                         $container.append(`
                             <div class="col-md-6 mb-3">
                                 <div class="card h-100 shadow-sm emotion-card border-0 rounded-4 overflow-hidden" data-index="${index}" style="cursor: pointer;">
@@ -249,14 +282,27 @@ $(document).ready(function () {
                                 </div>
                             </div>
                         `);
-                    }); 
+                    }); // 
+
+                } else {
+                    alert(res.message);
                 }
             },
             error: function (xhr) {
-                // FIX BUG 7 & 11: Render nội dung lỗi HTTP 400 rõ ràng cho người dùng
+                // BACKEND CONTRACT UPDATE: các lỗi do request không hợp lệ (điểm xuất
+                // phát không tìm thấy, sai định dạng giờ, weight ngoài khoảng 0-100...)
+                // giờ trả về HTTP 400/422 kèm { detail: "..." } thay vì luôn 200 với
+                // { status: "error" }. Hiển thị đúng thông điệp lỗi từ Backend thay vì
+                // một câu chung chung không giúp ích gì cho người dùng.
                 let msg = "Lỗi máy chủ nội bộ. Kiểm tra Backend!";
-                if (xhr.responseJSON && xhr.responseJSON.detail) {
-                    msg = xhr.responseJSON.detail;
+                if (xhr.responseJSON) {
+                    if (xhr.responseJSON.detail) {
+                        msg = typeof xhr.responseJSON.detail === 'string'
+                            ? xhr.responseJSON.detail
+                            : JSON.stringify(xhr.responseJSON.detail);
+                    } else if (xhr.responseJSON.message) {
+                        msg = xhr.responseJSON.message;
+                    }
                 }
                 alert(msg);
             },
@@ -285,7 +331,7 @@ $(document).ready(function () {
         let msg = `<strong>🕐 Bắt đầu:</strong> ${startStr} &nbsp;→&nbsp; <strong>🕔 Kết thúc:</strong> ${endStr} &nbsp;|&nbsp; <strong>Tổng:</strong> ${routeData.total_time_minutes} / ${availableMinutes} phút.`;
         
         if (routeData.dropped_point) {
-            msg += `<br><em style="font-size: 0.85rem;">* Hệ thống đã tự động loại bỏ một số điểm để đảm bảo quỹ thời gian/giờ đóng cửa.</em>`;
+            msg += `<br><em style="font-size: 0.85rem;">* Hệ thống đã tự động loại bỏ điểm xa nhất do không đủ quỹ thời gian.</em>`;
         }
         
         $('#metrics-info').removeClass('alert-info alert-warning alert-success alert-danger').addClass(alertClass).html(msg);
@@ -340,7 +386,20 @@ $(document).ready(function () {
 
         routeLocs.forEach((loc, idx) => {
             const markerHtml = `
-                <div style="background-color: #d87c4f; color: white; border-radius: 50%; width: 25px; height: 25px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5); font-size: 14px;">${idx + 1}</div>
+                <div style="
+                    background-color: #d87c4f; 
+                    color: white; 
+                    border-radius: 50%; 
+                    width: 25px; 
+                    height: 25px; 
+                    display: flex; 
+                    align-items: center; 
+                    justify-content: center; 
+                    font-weight: bold; 
+                    border: 2px solid white; 
+                    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+                    font-size: 14px;
+                ">${idx + 1}</div>
             `;
             
             const customIcon = L.divIcon({
@@ -351,6 +410,7 @@ $(document).ready(function () {
                 popupAnchor: [0, -12]
             });
 
+            // Giao diện Popup chi tiết địa điểm
             const loaiHinhBadge = loc.loai_hinh
                 ? `<span class="badge mb-2" style="background:#d87c4f; font-size:0.75rem;">${loc.loai_hinh}</span>`
                 : '';
@@ -360,14 +420,23 @@ $(document).ready(function () {
                 : (loc.mo_ta ? `<p class="mb-2" style="font-size: 0.82rem; color:#666;">${loc.mo_ta}</p>` : '');
 
             const phuHopHtml = loc.phu_hop
-                ? `<div class="mb-2" style="font-size: 0.8rem;"><i class="fa-solid fa-heart text-danger me-1"></i><strong>Phù hợp:</strong> ${loc.phu_hop}</div>`
+                ? `<div class="mb-2" style="font-size: 0.8rem;">
+                       <i class="fa-solid fa-heart text-danger me-1"></i>
+                       <strong>Phù hợp:</strong> ${loc.phu_hop}
+                   </div>`
                 : '';
 
             const reviewHtml = loc.review
-                ? `<div class="bg-light p-2 rounded border" style="font-size: 0.8rem; font-style: italic; border-left: 3px solid #d87c4f !important;"><i class="fa-solid fa-quote-left text-muted"></i> ${loc.review}</div>`
+                ? `<div class="bg-light p-2 rounded border" style="font-size: 0.8rem; font-style: italic; border-left: 3px solid #d87c4f !important;">
+                       <i class="fa-solid fa-quote-left text-muted"></i> ${loc.review}
+                   </div>`
                 : '';
 
-            const timeHtml = `<div class="mb-2" style="font-size: 0.8rem; color:#555;"><i class="fa-regular fa-clock me-1"></i> Tham quan: <strong>${loc.visit_time} phút</strong>&nbsp;|&nbsp; <i class="fa-solid fa-door-open me-1"></i>${loc.arrive_time} – ${loc.depart_time}</div>`;
+            const timeHtml = `<div class="mb-2" style="font-size: 0.8rem; color:#555;">
+                <i class="fa-regular fa-clock me-1"></i> Tham quan: <strong>${loc.visit_time} phút</strong>
+                &nbsp;|&nbsp; <i class="fa-solid fa-door-open me-1"></i>
+                ${loc.arrive_time} – ${loc.depart_time}
+            </div>`;
 
             const popupContent = `
                 <div style="min-width: 260px; max-width: 300px;">
@@ -427,7 +496,7 @@ $(document).ready(function () {
     }).on('mouseleave', '.emotion-card', function() {
         $(this).css({'transform': 'translateY(0)', 'border-color': 'transparent'});
     });
-    
+    // Sự kiện nút Quay lại màn hình Card
     $(document).on('click', '#btn-back-cards', function() {
         $('#result-panel').addClass('d-none');
         $('#emotion-cards-overlay').removeClass('d-none');

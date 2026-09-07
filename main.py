@@ -1,27 +1,32 @@
 import os
+import re
+import unicodedata
 import requests
 import pyodbc
 import math
 import random
-import unicodedata
-from collections import Counter
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
 
 app = FastAPI(title="Routing Optimization API")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
+import sqlite3
+
 SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
 DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
 SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
 
 def get_db_connection():
+    """
+    Thử kết nối SQL Server trước.
+    Nếu thất bại (máy bạn bè chưa cài SQL Server), tự động dùng SQLite dulich.db có sẵn trong Git.
+    """
     try:
         conn = pyodbc.connect(
             f'DRIVER={{ODBC Driver 17 for SQL Server}};'
@@ -44,18 +49,77 @@ def fetch_all_dict(cursor, db_type):
         cols = [col[0] for col in cursor.description]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
-# FIX BUG 1: Thêm user_preference và weight vào model
+
 class OptimizationRequest(BaseModel):
     region: str
     start_time: str
     end_time: str
-    trip_date: str = ""
-    start_point: str = ""
-    vehicle_type: str = "xe_may"
-    start_lat: Optional[float] = None
-    start_lon: Optional[float] = None
-    user_preference: str = ""
-    weight: int = 50
+    trip_date: str = ""           # Ngày khởi hành (YYYY-MM-DD)
+    start_point: str = ""         # Tên điểm xuất phát (tìm theo tên)
+    vehicle_type: str = "xe_may"  # Phương tiện
+    start_lat: Optional[float] = None   # Vĩ độ GPS (khi dùng vị trí hiện tại)
+    start_lon: Optional[float] = None   # Kinh độ GPS
+    user_preference: str = ""     # Mô tả sở thích không gian của người dùng (VD: "yên tĩnh, view đẹp")
+    weight: int = 50              # 0 = ưu tiên khoảng cách (đi gần) .. 100 = ưu tiên đúng sở thích (trải nghiệm)
+
+    @field_validator("weight")
+    @classmethod
+    def validate_weight(cls, v):
+        if v is None:
+            return 50
+        if not (0 <= v <= 100):
+            raise ValueError("weight phải nằm trong khoảng 0-100")
+        return v
+
+# ============================================================
+# PREFERENCE MATCHING (BUG 1 FIX)
+# user_preference (text) + weight (0-100) phải thực sự tham gia scoring.
+# Dữ liệu mô tả trong DB (thong_tin_chi_tiet, review, phu_hop) không dấu,
+# nên cần chuẩn hoá cả hai chiều (bỏ dấu) trước khi so khớp từ khoá.
+# ============================================================
+
+_VN_STOPWORDS = {
+    "la", "va", "co", "cua", "nhieu", "rat", "mot", "toi", "muon", "thich",
+    "khong", "gian", "de", "cho", "nhu", "hay", "o", "tai", "voi", "the",
+    "nay", "duoc", "nhung", "cac", "nen", "hon", "it", "moi", "ve", "roi",
+}
+
+def _strip_diacritics(text: str) -> str:
+    """Chuẩn hoá tiếng Việt: bỏ dấu, hạ chữ thường, để so khớp từ khoá
+    ổn định bất kể người dùng gõ có dấu hay dữ liệu DB không dấu."""
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    text = text.replace("đ", "d").replace("Đ", "D")
+    return text.lower()
+
+def _extract_keywords(text: str):
+    normalized = _strip_diacritics(text)
+    words = re.findall(r"[a-z0-9]+", normalized)
+    return [w for w in words if len(w) > 1 and w not in _VN_STOPWORDS]
+
+def calculate_preference_score(point: dict, preference_keywords: list) -> float:
+    """
+    Điểm phù hợp sở thích, thang 0..1 (càng cao càng phù hợp).
+    - Nếu người dùng không nhập preference (không có keyword) → trả 0.5 (trung lập),
+      để không âm thầm giả vờ đã áp dụng preference khi thực chất không có gì để so khớp.
+    - Nếu điểm đến không có dữ liệu mô tả nào → cũng trả 0.5 (trung lập, minh bạch),
+      thay vì mặc định 0 (bất lợi oan) hay 1 (ưu ái oan).
+    """
+    if not preference_keywords:
+        return 0.5
+    haystack = _strip_diacritics(" ".join([
+        point.get("thong_tin_chi_tiet") or "",
+        point.get("review") or "",
+        point.get("phu_hop") or "",
+        point.get("loai_hinh") or "",
+    ]))
+    if not haystack.strip():
+        return 0.5
+    matched = sum(1 for kw in preference_keywords if kw in haystack)
+    return min(1.0, matched / len(preference_keywords))
+
 
 @app.get("/api/locations")
 def get_locations():
@@ -68,7 +132,7 @@ def get_locations():
         conn.close()
         return {"status": "success", "data": locations, "db_engine": db_type}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "message": str(e)}
 
 def get_weather_factor(lat: float, lon: float) -> float:
     try:
@@ -76,54 +140,147 @@ def get_weather_factor(lat: float, lon: float) -> float:
         if res.get("current_weather", {}).get("weathercode", 0) >= 51:
             return 1.25
         return 1.0
-    except Exception:
+    except:
         return 1.0
 
-# FIX BUG 2 & 5: Hàm được sửa để nhận đầu vào là giờ của từng chặng, KHÔNG PHẢI chỉ gọi 1 lần
-def get_density_factor(t: time) -> float:
-    morning_start = time(7, 0)
-    morning_end   = time(9, 0)
-    evening_start = time(17, 0)
-    evening_end   = time(19, 0)
-    if (morning_start <= t <= morning_end) or (evening_start <= t <= evening_end):
-        return 1.8
+def get_density_factor(start_time_str: str) -> float:
+    try:
+        t = datetime.strptime(start_time_str, "%H:%M").time()
+        if (t >= datetime.strptime("07:00", "%H:%M").time() and t <= datetime.strptime("09:00", "%H:%M").time()) or \
+           (t >= datetime.strptime("17:00", "%H:%M").time() and t <= datetime.strptime("19:00", "%H:%M").time()):
+            return 1.8
+    except:
+        pass
     return 1.0
 
+# Danh sách các loại xe lớn bị hạn chế theo giờ
 LARGE_VEHICLE_TYPES = {"xe_16_cho", "xe_29_cho", "xe_45_cho"}
 
+# Cấp độ tiếp cận tối đa theo phương tiện
+# Cấp 1: bãi đỗ lớn, đường rộng (TTTM, di tích lớn) → tất cả xe
+# Cấp 2: đường chính, đỗ được xe con → xe máy + ô tô cá nhân
+# Cấp 3: hẻm/phố cổ hẹp, không bãi xe → chỉ xe máy, xe đạp, đi bộ
 VEHICLE_ACCESS_LEVEL = {
-    "xe_45_cho": 1, "xe_29_cho": 1, "xe_16_cho": 1,
-    "o_to": 2, "xe_may": 3, "xe_dap": 3, "di_bo": 3,
+    "xe_45_cho": 1,
+    "xe_29_cho": 1,
+    "xe_16_cho": 1,
+    "o_to":      2,
+    "xe_may":    3,
+    "xe_dap":    3,
+    "di_bo":     3,
 }
 
 VEHICLE_ACCESS_NOTE = {
     "xe_45_cho": "Xe 45 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe lớn.",
     "xe_29_cho": "Xe 29 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe lớn.",
-    "xe_16_cho": "Xe 16 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe rộng.",
+    "xe_16_cho": "Xe 16 chỗ: chỉ hiển thị địa điểm có bãi đỗ xe lớn.",
     "o_to":      "Ô tô: đã loại các địa điểm trong hẻm nhỏ không có chỗ đậu xe.",
 }
 
 def get_vehicle_osrm_profile(vehicle_type: str):
+    """
+    Trả về (tên profile OSRM, hệ số tắc đường) theo loại phương tiện.
+    - o_to      : Ô tô cá nhân  → driving, hệ số 1.8
+    - xe_may    : Xe máy        → driving, hệ số 1.5 (linh hoạt hơn)
+    - xe_16_cho : Xe 16 chỗ     → driving, hệ số 2.0 (cấm một số tuyến)
+    - xe_29_cho : Xe 29 chỗ     → driving, hệ số 2.2 (cấm nhiều tuyến hơn)
+    - xe_45_cho : Xe 45 chỗ     → driving, hệ số 2.5 (cấm nhiều nhất)
+    - xe_dap    : Xe đạp        → cycling, hệ số 1.0
+    - di_bo     : Đi bộ         → foot,    hệ số 1.0
+    """
     profile_map = {
-        "o_to": "driving", "xe_may": "driving",
-        "xe_16_cho": "driving", "xe_29_cho": "driving", "xe_45_cho": "driving",
-        "xe_dap": "cycling", "di_bo": "foot",
+        "o_to":      ("driving", 1.8),
+        "xe_may":    ("driving", 1.5),
+        "xe_16_cho": ("driving", 2.0),
+        "xe_29_cho": ("driving", 2.2),
+        "xe_45_cho": ("driving", 2.5),
+        "xe_dap":    ("cycling", 1.0),
+        "di_bo":     ("foot",    1.0),
     }
-    return profile_map.get(vehicle_type, "driving")
+    return profile_map.get(vehicle_type, ("driving", 1.8))
 
-def get_large_vehicle_restriction_factor(vehicle_type: str, t: time) -> float:
+def get_large_vehicle_restriction_factor(vehicle_type: str, time_str: str) -> float:
+    """
+    Tính hệ số phạt do HẠN CHẾ XE LỚN theo giờ.
+    Tại Hà Nội và nhiều TP lớn, xe từ 16 chỗ trở lên bị cấm vào
+    nội đô trong giờ cao điểm: 6:00-9:00 và 16:00-20:00.
+    
+    Xe càng lớn → bị cấm nhiều tuyến hơn → phải đi đường vòng → mất thêm thời gian.
+    Trả về hệ số nhân thêm vào thời gian di chuyển:
+      - 1.0: Không bị hạn chế (ngoài giờ cấm hoặc xe nhỏ)
+      - 1.5: Xe 16 chỗ trong giờ cấm (phải đi đường vòng ~50%)
+      - 1.8: Xe 29 chỗ trong giờ cấm
+      - 2.2: Xe 45 chỗ trong giờ cấm (bị cấm nhiều nhất)
+    """
     if vehicle_type not in LARGE_VEHICLE_TYPES:
         return 1.0
-    morning_start, morning_end = time(6, 0), time(9, 0)
-    evening_start, evening_end = time(16, 0), time(20, 0)
-    if (morning_start <= t <= morning_end) or (evening_start <= t <= evening_end):
-        if vehicle_type == "xe_16_cho": return 1.5
-        if vehicle_type == "xe_29_cho": return 1.8
-        if vehicle_type == "xe_45_cho": return 2.2
+    try:
+        t = datetime.strptime(time_str, "%H:%M").time()
+        morning_start = datetime.strptime("06:00", "%H:%M").time()
+        morning_end   = datetime.strptime("09:00", "%H:%M").time()
+        evening_start = datetime.strptime("16:00", "%H:%M").time()
+        evening_end   = datetime.strptime("20:00", "%H:%M").time()
+
+        in_restricted_hours = (
+            (morning_start <= t <= morning_end) or
+            (evening_start <= t <= evening_end)
+        )
+        if in_restricted_hours:
+            restriction_map = {
+                "xe_16_cho": 1.5,
+                "xe_29_cho": 1.8,
+                "xe_45_cho": 2.2,
+            }
+            return restriction_map.get(vehicle_type, 1.0)
+    except:
+        pass
     return 1.0
 
+# ============================================================
+# ĐẶT TÊN LỘ TRÌNH THEO NỘI DUNG THỰC TẾ (BUG 3 FIX)
+# Backend quyết định tên dựa trên loai_hinh chiếm ưu thế trong route,
+# KHÔNG dùng index xoay vòng qua danh sách tên cố định.
+# ============================================================
+_CATEGORY_ROUTE_NAME = {
+    "Cafe": "Hơi thở thiên nhiên & Sống chậm",
+    "Tham quan": "Không gian hoài niệm & Khám phá",
+    "Checkin": "Khám phá góc phố & Check-in",
+    "TTTM": "Mua sắm & Giải trí trọn vẹn",
+    "Ăn uống": "Hành trình ẩm thực",
+}
+
+def generate_route_name(route_points: list, route_index: int) -> str:
+    """
+    Sinh tên lộ trình dựa trên đặc điểm thực tế (loai_hinh) của các điểm
+    trong route đó. Nếu một loại hình chiếm >=60% số điểm, dùng tên chủ đề
+    tương ứng. Nếu route có từ 3 loại hình khác nhau trở lên, đặt tên phản
+    ánh sự đa dạng. Nếu không đủ dữ liệu để đặt tên có ý nghĩa, dùng tên
+    an toàn "Lộ trình {index}" thay vì đoán bừa.
+    """
+    if not route_points:
+        return f"Lộ trình {route_index}"
+
+    counts = {}
+    for p in route_points:
+        lh = p.get("loai_hinh") or "Khác"
+        counts[lh] = counts.get(lh, 0) + 1
+
+    total = len(route_points)
+    dominant, dcount = max(counts.items(), key=lambda kv: kv[1])
+
+    if dcount / total >= 0.6 and dominant in _CATEGORY_ROUTE_NAME:
+        return _CATEGORY_ROUTE_NAME[dominant]
+    if len(counts) >= 3:
+        return "Trải nghiệm trọn vẹn nhịp sống đô thị"
+    return f"Lộ trình {route_index}"
+
+
 def get_global_osrm_matrix(points_list, vehicle_type: str = "xe_may"):
-    osrm_profile = get_vehicle_osrm_profile(vehicle_type)
+    """
+    Lấy ma trận khoảng cách và thời gian di chuyển từ OSRM.
+    Áp dụng profile phương tiện phù hợp và hệ số tắc đường tương ứng.
+    """
+    osrm_profile, K_TRAFFIC = get_vehicle_osrm_profile(vehicle_type)
     coords = ";".join([f"{p['lon']},{p['lat']}" for p in points_list])
     url = f"http://router.project-osrm.org/table/v1/{osrm_profile}/{coords}?annotations=duration,distance"
     matrix_dict = {}
@@ -136,146 +293,140 @@ def get_global_osrm_matrix(points_list, vehicle_type: str = "xe_may"):
             matrix_dict[p1["id"]] = {}
             for j, p2 in enumerate(points_list):
                 matrix_dict[p1["id"]][p2["id"]] = {
-                    "duration": (durations[i][j] / 60.0), # Lấy base duration gốc (chưa tính kẹt xe)
-                    "distance": distances[i][j] / 1000.0
+                    "duration": (durations[i][j] / 60.0) * K_TRAFFIC,  # Phút (đã nhân hệ số tắc đường)
+                    "distance": distances[i][j] / 1000.0                # Km
                 }
         return matrix_dict
-    except Exception:
+    except:
+        # Fallback: ước tính khi không gọi được OSRM
         for p1 in points_list:
             matrix_dict[p1["id"]] = {}
             for p2 in points_list:
                 matrix_dict[p1["id"]][p2["id"]] = {
-                    "duration": 15.0 if p1["id"] != p2["id"] else 0.0,
-                    "distance": 5.0 if p1["id"] != p2["id"] else 0.0
+                    "duration": (15 if p1["id"] != p2["id"] else 0) * K_TRAFFIC,
+                    "distance": 5.0 if p1["id"] != p2["id"] else 0
                 }
         return matrix_dict
 
-# Logic Matching Text Hỗ trợ Sở thích (BUG 1)
-def normalize_text(text: str) -> str:
-    if not text: return ""
-    text = unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode('utf-8')
-    return text.lower().strip()
+def calc_dist(p1, p2):
+    """Khoảng cách đường chim bay xấp xỉ (km), dùng làm fallback khi thiếu ma trận OSRM."""
+    return math.sqrt((p1["lat"] - p2["lat"]) ** 2 + (p1["lon"] - p2["lon"]) ** 2) * 111
 
-def calculate_preference_score(point: dict, user_pref: str) -> float:
-    if not user_pref: return 0.0
-    pref_norm = normalize_text(user_pref)
-    keywords = [k.strip() for k in pref_norm.split(",") if k.strip()]
-    if not keywords: keywords = pref_norm.split()
-    
-    content = f"{point.get('mo_ta','')} {point.get('thong_tin_chi_tiet','')} {point.get('review','')} {point.get('phu_hop','')}"
-    content_norm = normalize_text(content)
-    
-    matches = sum(1 for kw in keywords if kw in content_norm)
-    return - (matches * 20.0)  # Trả về điểm âm để ưu tiên trong hàm tính cost
+def get_travel_minutes(origin_id, dest_id, dist_km, matrix_dict, k_weather, vehicle_type, departure_dt):
+    """
+    Thời gian di chuyển (phút), tính ĐỘNG theo thời điểm khởi hành thực tế của
+    CHẶNG ĐÓ (BUG 5 fix) — không dùng một hệ số cố định tính từ start_time cho
+    toàn bộ chuyến đi.
 
-# Logic định danh lộ trình dựa vào điểm (BUG 3)
-def generate_route_name(route_points):
-    categories = [p.get("loai_hinh", "") for p in route_points if p.get("loai_hinh") and p.get("loai_hinh") != "diem_xuat_phat"]
-    if not categories: return "Lộ trình Khám phá"
-    counts = Counter(categories)
-    top = counts.most_common(2)
-    if len(top) == 1:
-        return f"Hành trình {top[0][0]}"
-    else:
-        return f"Kết hợp {top[0][0]} & {top[1][0]}"
+    Congestion (k_density) và hạn chế xe lớn theo giờ (k_restriction) CHỈ tác
+    động đến travel_time, KHÔNG được áp dụng cho visit_time (BUG 2 fix).
+    """
+    time_str = departure_dt.strftime("%H:%M")
+    k_density_dynamic = get_density_factor(time_str)
+    k_restriction_dynamic = get_large_vehicle_restriction_factor(vehicle_type, time_str)
 
-# Tái cấu trúc bộ Time Engine (BUG 5, 6, 8, 9 + FIX THỜI GIAN CHỜ)
-def calculate_cost_with_clock(route_indices, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date, max_wait_tolerance):
+    try:
+        base_duration = matrix_dict[origin_id][dest_id]["duration"]
+    except (KeyError, TypeError):
+        base_duration = (dist_km / 20.0) * 60
+
+    return base_duration * k_weather * k_density_dynamic * k_restriction_dynamic
+
+def calculate_cost_with_clock(route_indices, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date):
+    """
+    Mô phỏng tuần tự Current Time -> Travel -> Arrival -> Visit -> Next Departure
+    cho toàn bộ route, trả về (cost, violation_index).
+    violation_index là vị trí (trong route_indices) của điểm ĐẦU TIÊN gây vi phạm
+    giờ đóng cửa / vượt khung giờ cho phép — dùng để xác định CHÍNH XÁC điểm cần
+    xử lý khi route không khả thi (BUG 6 fix), thay vì đoán mù theo khoảng cách.
+    """
     current_clock = clock_start_dt
     penalty = 0
-    violation_index = -1
-    
+    violation_index = None
+
     for i in range(len(route_indices)):
         idx = route_indices[i]
         p = points_data[idx]
         p_open = datetime.combine(base_date, p["open_time"])
         p_close = datetime.combine(base_date, p["close_time"])
-        
-        if i > 0:
-            prev_idx = route_indices[i-1]
-            prev_p = points_data[prev_idx]
-            
-            # Diversity là soft constraint
-            if p.get("loai_hinh") == prev_p.get("loai_hinh") and p.get("loai_hinh") != "diem_xuat_phat":
-                penalty += 10
-            
-            base_travel_mins = matrix_dict[prev_p["id"]][p["id"]]["duration"]
-            
-            k_density = get_density_factor(current_clock.time())
-            k_restriction = get_large_vehicle_restriction_factor(vehicle_type, current_clock.time())
-            
-            travel_mins = base_travel_mins * k_weather * k_density * k_restriction
-            current_clock += timedelta(minutes=travel_mins)
-            
-        wait_mins = 0
-        if current_clock < p_open:
-            wait_mins = (p_open - current_clock).total_seconds() / 60
-            current_clock = p_open
-            
-        # LOGIC MỚI: Xử lý phạt thời gian chờ
-        if i > 0: # Bỏ qua điểm xuất phát đầu tiên (origin)
-            if wait_mins > max_wait_tolerance:
-                penalty += 10000 # Vi phạm Hard Constraint: Chờ quá lâu so với chiến lược
-                if violation_index == -1:
-                    violation_index = i
-            else:
-                # Soft penalty: Càng chờ lâu càng bị cộng điểm xấu, ép thuật toán tìm đường mượt hơn
-                penalty += wait_mins * 2 
-                
-        visit_mins = p["time"] 
-        departure = current_clock + timedelta(minutes=visit_mins)
-        
-        # Hard Constraint đóng cửa
-        if departure > p_close or departure > clock_end_dt:
-            penalty += 10000 
-            if violation_index == -1: 
-                violation_index = i
-                
-        current_clock = departure
-        
-    total_minutes = (current_clock - clock_start_dt).total_seconds() / 60
-    return total_minutes, penalty, violation_index
 
-def two_opt_algorithm(route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date, max_wait_tolerance):
+        if i > 0:
+            prev_idx = route_indices[i - 1]
+            prev_p = points_data[prev_idx]
+
+            if p["loai_hinh"] == prev_p["loai_hinh"]:
+                penalty += 1000
+
+            dist_km = calc_dist(prev_p, p)
+            travel_mins = get_travel_minutes(prev_p["id"], p["id"], dist_km, matrix_dict, k_weather, vehicle_type, current_clock)
+            current_clock += timedelta(minutes=travel_mins)
+
+        if i > 1:
+            prev_prev_idx = route_indices[i - 2]
+            prev_prev_p = points_data[prev_prev_idx]
+            if p["loai_hinh"] == prev_prev_p["loai_hinh"]:
+                penalty += 500
+
+        if current_clock < p_open:
+            current_clock = p_open
+
+        visit_mins = p.get("time") or 0   # Visit time KHÔNG nhân với bất kỳ hệ số traffic nào
+        departure = current_clock + timedelta(minutes=visit_mins)
+
+        if departure > p_close or departure > clock_end_dt:
+            penalty += 10000
+            if violation_index is None:
+                violation_index = i
+
+        current_clock = departure
+
+    total_minutes = (current_clock - clock_start_dt).total_seconds() / 60
+    return total_minutes + penalty, violation_index
+
+def two_opt_algorithm(route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date):
     best_route = route
-    b_time, b_pen, b_vio = calculate_cost_with_clock(route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date, max_wait_tolerance)
-    best_cost = b_time + b_pen
-    
+    best_cost, best_violation_idx = calculate_cost_with_clock(route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date)
     improved = True
     while improved:
         improved = False
+        # Bắt đầu từ i=1 để KHÔNG đảo điểm xuất phát (index 0 luôn cố định)
         for i in range(1, len(best_route) - 1):
             for j in range(i + 1, len(best_route) + 1):
                 if j - i <= 1: continue
                 new_route = best_route[:]
                 new_route[i:j] = best_route[i:j][::-1]
-                t_time, t_pen, t_vio = calculate_cost_with_clock(new_route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date, max_wait_tolerance)
-                new_cost = t_time + t_pen
+                new_cost, new_violation_idx = calculate_cost_with_clock(new_route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date)
                 if new_cost < best_cost:
-                    best_route, best_cost = new_route, new_cost
-                    b_time, b_pen, b_vio = t_time, t_pen, t_vio
+                    best_route, best_cost, best_violation_idx = new_route, new_cost, new_violation_idx
                     improved = True
-    return best_route, b_time, b_pen, b_vio
+    return best_route, best_cost, best_violation_idx
 
 @app.post("/api/optimize-route")
 async def optimize_route(request: OptimizationRequest):
+    # 1. XỬ LÝ NGÀY KHỞI HÀNH (trip_date)
     try:
-        if request.trip_date: base_date = datetime.strptime(request.trip_date, "%Y-%m-%d").date()
-        else: base_date = datetime.today().date()
-    except Exception:
+        if request.trip_date:
+            base_date = datetime.strptime(request.trip_date, "%Y-%m-%d").date()
+        else:
+            base_date = datetime.today().date()
+    except:
         base_date = datetime.today().date()
 
+    # 2. XỬ LÝ THỜI GIAN BẮT ĐẦU / KẾT THÚC
     try:
         clock_start = datetime.strptime(request.start_time, "%H:%M").replace(
-            year=base_date.year, month=base_date.month, day=base_date.day)
+            year=base_date.year, month=base_date.month, day=base_date.day
+        )
         clock_end = datetime.strptime(request.end_time, "%H:%M").replace(
-            year=base_date.year, month=base_date.month, day=base_date.day)
+            year=base_date.year, month=base_date.month, day=base_date.day
+        )
         if clock_end <= clock_start:
             clock_end += timedelta(days=1)
         available_minutes = (clock_end - clock_start).total_seconds() / 60
-    except Exception:
-        raise HTTPException(status_code=400, detail="Lỗi định dạng thời gian.")
+    except:
+        raise HTTPException(status_code=400, detail="Lỗi định dạng thời gian (start_time/end_time phải theo dạng HH:MM)")
 
+    # 3. LẤY DANH SÁCH ĐỊA ĐIỂM TỪ DATABASE
     conn, db_type = get_db_connection()
     cursor = conn.cursor()
     query = """
@@ -291,12 +442,13 @@ async def optimize_route(request: OptimizationRequest):
     conn.close()
     
     all_points = []
-    default_open = time(0, 0)
-    default_close = time(23, 59)
+    default_open = datetime.strptime("00:00", "%H:%M").time()
+    default_close = datetime.strptime("23:59", "%H:%M").time()
 
     for r in rows:
         open_time = r["gio_mo_cua"] if r["gio_mo_cua"] else default_open
         close_time = r["gio_dong_cua"] if r["gio_dong_cua"] else default_close
+        
         if isinstance(open_time, str): open_time = datetime.strptime(open_time[:5], "%H:%M").time()
         if isinstance(close_time, str): close_time = datetime.strptime(close_time[:5], "%H:%M").time()
 
@@ -304,64 +456,130 @@ async def optimize_route(request: OptimizationRequest):
             "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], 
             "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
             "open_time": open_time, "close_time": close_time,
-            "mo_ta": r["mo_ta"] or "", "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
-            "review": r["review"] or "", "phu_hop": r["phu_hop"] or "",
+            "mo_ta": r["mo_ta"] or "",
+            "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
+            "review": r["review"] or "",
+            "phu_hop": r["phu_hop"] or "",
             "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
         })
 
+    # 3b. LỌC ĐỊA ĐIỂM THEO KHẢ NĂNG TIẾP CẬN CỦA PHƯƠNG TIỆN
     max_access = VEHICLE_ACCESS_LEVEL.get(request.vehicle_type, 3)
     all_points = [p for p in all_points if p["cap_do_tiep_can"] <= max_access]
     vehicle_note = VEHICLE_ACCESS_NOTE.get(request.vehicle_type, "")
 
-    all_points.sort(key=lambda x: x["score"] if x["score"] else 0, reverse=True)
+    # 3c. TÍNH PREFERENCE SCORE CHO TỪNG ĐIỂM (BUG 1 FIX)
+    # user_preference + weight phải thực sự tham gia scoring/route generation,
+    # không chỉ được nhận vào rồi bỏ qua.
+    preference_keywords = _extract_keywords(request.user_preference)
+    pref_weight = request.weight / 100.0  # 0 = ưu tiên khoảng cách, 1 = ưu tiên đúng sở thích
+    for p in all_points:
+        p["preference_score"] = calculate_preference_score(p, preference_keywords)
+
+    # 4. LẤY MA TRẬN KHOẢNG CÁCH THEO PHƯƠNG TIỆN (vehicle_type)
+    global_matrix = get_global_osrm_matrix(all_points, vehicle_type=request.vehicle_type)
+
+    # 5. XÁC ĐỊNH ĐIỂM XUẤT PHÁT (start_point)
+    all_points.sort(key=lambda x: (x["score"] if x["score"] is not None else 0), reverse=True)
 
     if request.start_lat is not None and request.start_lon is not None:
+        # TRƯỜNG HỢP 1: Người dùng dùng GPS → tạo điểm ảo "Vị trí hiện tại"
+        # Điểm này không có trong DB, thời gian tham quan = 0 phút
         gps_point = {
-            "id": "gps_current", "ten": "📍 Vị trí của bạn", "lat": request.start_lat, "lon": request.start_lon,
-            "time": 0, "loai_hinh": "diem_xuat_phat", "open_time": default_open, "close_time": default_close,
-            "mo_ta": "", "thong_tin_chi_tiet": "", "review": "", "phu_hop": ""
+            "id": "gps_current",
+            "ten": "📍 Vị trí của bạn",
+            "lat": request.start_lat,
+            "lon": request.start_lon,
+            "time": 0,              
+            "loai_hinh": "diem_xuat_phat",
+            "open_time": default_open,
+            "close_time": default_close,
+            "mo_ta": "", "thong_tin_chi_tiet": "", "review": "", "phu_hop": "",
+            "preference_score": 0.5,
         }
-        all_points.insert(0, gps_point)
-        starting_points = [gps_point]
+
+        all_points_with_gps = [gps_point] + all_points
+        global_matrix = get_global_osrm_matrix(all_points_with_gps, vehicle_type=request.vehicle_type)
+        all_points = all_points_with_gps   # Cập nhật danh sách để route dùng đúng
+        starting_points = [gps_point]      # Chỉ xuất phát từ vị trí GPS
+
     elif request.start_point and request.start_point.strip():
+        # TRƯỜNG HỢP 2: Người dùng nhập tên điểm → tìm trong DB
         keyword = request.start_point.strip().lower()
         matched_points = [p for p in all_points if keyword in p["ten"].lower()]
         if matched_points:
-            starting_points = matched_points[:1]
+            starting_points = matched_points[:1]  # Chỉ xuất phát từ điểm tìm được
         else:
-            raise HTTPException(status_code=400, detail="Không tìm thấy địa điểm xuất phát trong cơ sở dữ liệu. Vui lòng nhập từ khóa khác hoặc dùng GPS.")
+            # BUG 7 FIX: KHÔNG được âm thầm fallback sang all_points[:1] (điểm bất kỳ).
+            # Trả lỗi rõ ràng để Frontend thông báo cho người dùng, thay vì tự ý
+            # chọn một điểm xuất phát không liên quan đến địa chỉ họ đã nhập.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Không tìm thấy địa điểm xuất phát '{request.start_point}'. "
+                       f"Vui lòng kiểm tra lại địa chỉ hoặc sử dụng định vị GPS."
+            )
+
     else:
-        starting_points = all_points[:3]
+        # TRƯỜNG HỢP 3: Không nhập gì (không GPS, không tên) → KHÔNG được tự ý
+        # chọn đại điểm xuất phát. Đây cũng là fallback nguy hiểm giống BUG 7,
+        # nên áp dụng cùng nguyên tắc: phải có GPS hoặc địa chỉ hợp lệ mới chạy.
+        raise HTTPException(
+            status_code=400,
+            detail="Vui lòng nhập điểm xuất phát hoặc sử dụng định vị GPS."
+        )
+    # 6. TÍNH TOÁN LỘ TRÌNH TỐI ƯU
+    # LƯU Ý: k_density (mật độ giao thông) và k_restriction (hạn chế xe lớn theo giờ)
+    # KHÔNG còn được tính một lần từ request.start_time rồi dùng cho toàn bộ chuyến đi
+    # (đó chính là BUG 5). Hai hệ số này giờ được get_travel_minutes() tính LẠI động,
+    # theo đúng thời điểm khởi hành thực tế của TỪNG CHẶNG di chuyển.
 
-    global_matrix = get_global_osrm_matrix(all_points, vehicle_type=request.vehicle_type)
+    # (Đã loại bỏ hàm build_route_greedy() vì là dead code — không được gọi ở bất kỳ
+    #  đâu trong flow hiện tại, chỉ build_route_greedy_custom() mới thực sự sinh route.
+    #  Hàm cũ còn giữ nguyên lỗi visit_time*k_dens nên loại bỏ để tránh gây nhầm lẫn
+    #  hoặc bị dùng nhầm trong tương lai. Xem phần báo cáo audit.)
 
-    def calc_dist(p1, p2): return math.sqrt((p1["lat"] - p2["lat"])**2 + (p1["lon"] - p2["lon"])**2) * 111
-
-    def finalize_route(selected_points, k_weather, route_label, max_wait_tolerance):
-        if len(selected_points) < 2: return None
+    def finalize_route(selected_points, k_weather, route_label, route_index):
+        """
+        Áp dụng 2-opt, xử lý drop-point khi route vi phạm giờ đóng cửa, rồi tạo
+        chi tiết lộ trình cuối cùng (kèm route_name theo nội dung thực tế).
+        Trả về dict lộ trình hoặc None nếu không hợp lệ.
+        """
+        if len(selected_points) < 2:
+            return None
 
         initial_route = list(range(len(selected_points)))
-        best_route_indices, b_time, b_pen, b_vio = two_opt_algorithm(
+        best_route_indices, best_cost, violation_idx = two_opt_algorithm(
             initial_route, global_matrix, selected_points,
-            k_weather, request.vehicle_type, clock_start, clock_end, base_date, max_wait_tolerance
+            k_weather, request.vehicle_type, clock_start, clock_end, base_date
         )
 
         dropped_point = False
-        # Xóa chính xác index gây lố giờ / lố thời gian chờ
-        while b_pen >= 10000 and len(best_route_indices) > 2:
-            idx_to_remove = b_vio
-            if idx_to_remove <= 0 or idx_to_remove >= len(best_route_indices):
-                idx_to_remove = len(best_route_indices) - 1
-            
-            best_route_indices.pop(idx_to_remove)
+        # Chỉ drop khi vi phạm cứng (penalty >= 10000: vượt giờ đóng cửa hoặc hết giờ)
+        # KHÔNG drop vì best_cost > available_minutes vì cost tính gộp cả penalty làm tăng ảo
+        #
+        # BUG 6 FIX: xoá đúng ĐIỂM GÂY VI PHẠM (violation_idx do calculate_cost_with_clock
+        # xác định), KHÔNG xoá điểm xa nhất so với điểm xuất phát (furthest_idx) — hai
+        # điều đó không liên quan gì đến nhau về mặt nghiệp vụ.
+        max_drop_attempts = len(best_route_indices)
+        attempts = 0
+        while best_cost >= 10000 and len(best_route_indices) > 2 and attempts < max_drop_attempts:
+            attempts += 1
+            if violation_idx is None or not (0 <= violation_idx < len(best_route_indices)):
+                # Không xác định được chính xác điểm gây vi phạm → KHÔNG được đoán mù
+                # (vd. xoá đại điểm xa nhất). Dừng lại, route sẽ được coi là bất khả thi.
+                break
+            point_to_drop = best_route_indices[violation_idx]
+            if point_to_drop == best_route_indices[0]:
+                # Điểm xuất phát không bao giờ được xoá.
+                break
+            best_route_indices = [x for x in best_route_indices if x != point_to_drop]
             dropped_point = True
-            
-            best_route_indices, b_time, b_pen, b_vio = two_opt_algorithm(
+            best_route_indices, best_cost, violation_idx = two_opt_algorithm(
                 best_route_indices, global_matrix, selected_points,
-                k_weather, request.vehicle_type, clock_start, clock_end, base_date, max_wait_tolerance
+                k_weather, request.vehicle_type, clock_start, clock_end, base_date
             )
 
-        if len(best_route_indices) < 2 or b_pen >= 10000:
+        if len(best_route_indices) < 2 or best_cost >= 10000:
             return None
 
         final_route_details = []
@@ -372,16 +590,11 @@ async def optimize_route(request: OptimizationRequest):
             point = selected_points[idx]
             p_open = datetime.combine(base_date, point["open_time"])
 
-            travel_time, travel_dist = 0, 0
+            travel_time = 0
             if i > 0:
                 prev_point = selected_points[best_route_indices[i - 1]]
-                b_dur = global_matrix[prev_point["id"]][point["id"]]["duration"]
-                travel_dist = global_matrix[prev_point["id"]][point["id"]]["distance"]
-                
-                k_den = get_density_factor(simulated_clock.time())
-                k_res = get_large_vehicle_restriction_factor(request.vehicle_type, simulated_clock.time())
-                
-                travel_time = b_dur * k_weather * k_den * k_res
+                dist_km = calc_dist(prev_point, point)
+                travel_time = get_travel_minutes(prev_point["id"], point["id"], dist_km, global_matrix, k_weather, request.vehicle_type, simulated_clock)
                 simulated_clock += timedelta(minutes=travel_time)
 
             wait_time = 0
@@ -389,10 +602,10 @@ async def optimize_route(request: OptimizationRequest):
                 wait_time = (p_open - simulated_clock).total_seconds() / 60
                 simulated_clock = p_open
 
-            arrive_time_str = simulated_clock.strftime("%H:%M")
-            visit_time = point["time"]
+            arrive_time_str = simulated_clock.strftime("%H:%M")   # Giờ đến
+            visit_time = point.get("time") or 0   # Visit time KHÔNG nhân hệ số traffic (BUG 2 fix)
             simulated_clock += timedelta(minutes=visit_time)
-            depart_time_str = simulated_clock.strftime("%H:%M")
+            depart_time_str = simulated_clock.strftime("%H:%M")   # Giờ rời
 
             final_route_details.append({
                 "id": point["id"], "ten": point["ten"],
@@ -406,14 +619,30 @@ async def optimize_route(request: OptimizationRequest):
                 "wait_time": round(wait_time, 1),
                 "arrive_time": arrive_time_str,
                 "depart_time": depart_time_str,
-                "travel_to_next": 0, "distance_to_next": 0
+                "travel_to_next": 0,
+                "distance_to_next": 0
             })
-            
-            if i > 0:
-                final_route_details[i-1]["travel_to_next"] = round(travel_time, 1)
-                final_route_details[i-1]["distance_to_next"] = round(travel_dist, 1)
+
+        # travel_to_next hiển thị cho UI: dùng lại đúng thời điểm khởi hành thực tế
+        # (arrive/depart đã mô phỏng ở trên) để nhất quán với travel_time đã dùng khi
+        # tính lịch trình, thay vì tính lại bằng một công thức khác (tránh double logic).
+        for i in range(len(final_route_details) - 1):
+            idx1 = best_route_indices[i]
+            idx2 = best_route_indices[i + 1]
+            p1, p2 = selected_points[idx1], selected_points[idx2]
+            departure_dt = datetime.combine(base_date, datetime.strptime(final_route_details[i]["depart_time"], "%H:%M").time())
+            dist_km = calc_dist(p1, p2)
+            travel_dur = get_travel_minutes(p1["id"], p2["id"], dist_km, global_matrix, k_weather, request.vehicle_type, departure_dt)
+            try:
+                travel_dist = global_matrix[p1["id"]][p2["id"]]["distance"]
+            except (KeyError, TypeError):
+                travel_dist = dist_km
+            final_route_details[i]["travel_to_next"] = round(travel_dur, 1)
+            final_route_details[i]["distance_to_next"] = round(travel_dist, 1)
 
         total_actual = (simulated_clock - clock_start).total_seconds() / 60
+        route_pts = [selected_points[i] for i in best_route_indices]
+        avg_preference = sum(p.get("preference_score", 0.5) for p in route_pts) / len(route_pts)
 
         return {
             "dropped_point": dropped_point,
@@ -421,54 +650,48 @@ async def optimize_route(request: OptimizationRequest):
             "vehicle_type": request.vehicle_type,
             "trip_date": str(base_date),
             "strategy": route_label,
-            "route_name": generate_route_name(selected_points),
+            "route_name": generate_route_name(route_pts, route_index),
+            "avg_preference_score": round(avg_preference, 3),
             "optimized_route": final_route_details
         }
 
-    def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn, max_wait_tolerance):
+    def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn):
+        """
+        Greedy builder với scorer tùy chỉnh.
+        score_fn(last_point, candidate, dist_km) -> float  (nhỏ hơn = ưu tiên hơn)
+        end_clock: thời điểm kết thúc tối đa (clock_end hoặc fake ngắn hơn).
+
+        travel_time dùng get_travel_minutes() (tính động theo thời điểm khởi hành
+        thực tế của từng chặng — BUG 5 fix). visit_time KHÔNG nhân hệ số traffic
+        (BUG 2 fix).
+        """
         origin_open  = datetime.combine(base_date, origin["open_time"])
         origin_close = datetime.combine(base_date, origin["close_time"])
         current_clock = max(clock_start, origin_open)
-        departure = current_clock + timedelta(minutes=origin["time"])
-        
-        if departure > origin_close or departure > end_clock: return None
-        selected, unvisited = [origin], list(candidate_pool)
-        
+        departure = current_clock + timedelta(minutes=(origin.get("time") or 0))
+        if departure > origin_close or departure > end_clock:
+            return None
+        selected  = [origin]
+        unvisited = list(candidate_pool)
         while True:
-            best_next, best_score, best_dep = None, float('inf'), departure
+            best_next  = None
+            best_score = float('inf')
+            best_dep   = departure
             for p in unvisited:
-                b_dist = global_matrix[selected[-1]["id"]].get(p["id"], {}).get("distance", 5.0)
-                b_dur  = global_matrix[selected[-1]["id"]].get(p["id"], {}).get("duration", 15.0)
-                
-                k_den = get_density_factor(departure.time())
-                k_res = get_large_vehicle_restriction_factor(request.vehicle_type, departure.time())
-                
-                est_travel = b_dur * k_weather * k_den * k_res
-                arrival = departure + timedelta(minutes=est_travel)
-                
-                p_open = datetime.combine(base_date, p["open_time"])
-                p_close = datetime.combine(base_date, p["close_time"])
-                
-                wait_mins = 0
-                if arrival < p_open:
-                    wait_mins = (p_open - arrival).total_seconds() / 60
-                    
-                # LOGIC MỚI: Nếu thời gian chờ vượt quá sức chịu đựng của chiến lược -> Bỏ qua điểm này ngay lập tức
-                if wait_mins > max_wait_tolerance:
-                    continue
-                    
-                sv = max(arrival, p_open)
-                nd = sv + timedelta(minutes=p["time"])
-                
+                dist = calc_dist(selected[-1], p)
+                est_travel = get_travel_minutes(selected[-1]["id"], p["id"], dist, global_matrix, k_weather, request.vehicle_type, departure)
+                est_visit  = p.get("time") or 0
+                arrival    = departure + timedelta(minutes=est_travel)
+                p_open     = datetime.combine(base_date, p["open_time"])
+                p_close    = datetime.combine(base_date, p["close_time"])
+                sv         = max(arrival, p_open)
+                nd         = sv + timedelta(minutes=est_visit)
                 if nd <= p_close and nd <= end_clock:
-                    sc = score_fn(selected[-1], p, b_dist)
-                    
-                    # Cộng thêm penalty chờ vào điểm số đánh giá để ưu tiên điểm mở cửa sẵn
-                    sc += wait_mins * (2.0 if max_wait_tolerance <= 30 else 0.5) 
-                    
+                    sc = score_fn(selected[-1], p, dist)
                     if sc < best_score:
-                        best_score, best_next, best_dep = sc, p, nd
-                        
+                        best_score = sc
+                        best_next  = p
+                        best_dep   = nd
             if best_next:
                 selected.append(best_next)
                 unvisited.remove(best_next)
@@ -477,62 +700,129 @@ async def optimize_route(request: OptimizationRequest):
                 break
         return selected if len(selected) >= 2 else None
 
-    def generate_routes_with_factor():
-        generated, seen_fingerprints = [], set()
+    # Biên độ (km-tương-đương) tối đa mà mức độ KHÔNG phù hợp preference có thể
+    # "phạt" vào điểm số greedy. Dùng để hoà trộn preference_score (thang 0..1)
+    # với distance (thang km) theo đúng pref_weight người dùng chọn.
+    PREF_PENALTY_SCALE_KM = 6.0
 
-        def try_add(pts, k_weather, label, max_wait):
-            if not pts or len(pts) < 2: return
-            r = finalize_route(pts, k_weather, label, max_wait)
-            if not r: return
+    def _preference_penalty(p):
+        return (1.0 - p.get("preference_score", 0.5)) * PREF_PENALTY_SCALE_KM
+
+    def generate_routes_with_factor():
+        generated         = []
+        seen_fingerprints = set()
+
+        def try_add(pts, k_weather, label):
+            if not pts or len(pts) < 2:
+                return
+            route_index = len(generated) + 1
+            r = finalize_route(pts, k_weather, label, route_index)
+            if not r:
+                return
             fp = frozenset(p["id"] for p in r["optimized_route"])
             if fp not in seen_fingerprints:
                 seen_fingerprints.add(fp)
                 r["route_id"] = len(generated) + 1
                 generated.append(r)
 
-        w_ratio = max(0, min(100, request.weight)) / 100.0
-        
-        def custom_preference_scorer(last, p, d):
-            pref_score = calculate_preference_score(p, request.user_preference)
-            rating = p.get("score") or 1.0
-            div_pen = 20 if p.get("loai_hinh") == last.get("loai_hinh") else 0
-            return (d * (1 - w_ratio) * 10) - (rating * w_ratio * 10) + (pref_score * w_ratio) + div_pen
-
-        # QUY ĐỊNH RÕ RÀNG MỨC ĐỘ ƯU TIÊN CHỜ ĐỢI
-        # Format: (Hàm tính điểm, Tên chiến lược, Sức chịu đựng thời gian chờ tối đa - phút)
-        scorers = [
-            (lambda last, p, d: d, "Gần nhất (Tiết kiệm thời gian)", 15), # Ưu tiên thời gian -> Không thích chờ, tối đa 15p
-            (lambda last, p, d: -(p.get("score") or 0) + (15 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "Điểm đánh giá cao nhất", 45), # Địa điểm xịn -> Chờ lâu hơn tí (45p)
-            (custom_preference_scorer, "Lộ trình Phù hợp sở thích", 60), # Đúng gu -> Sẵn sàng chờ (60p)
-            (lambda last, p, d: d + (50 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "Đa dạng trải nghiệm", 30), # Ưu tiên trải nghiệm nhưng vẫn cân bằng (30p)
-        ]
-
-        time_budgets = []
-        for ratio in [0.25, 0.5, 0.75, 1.0]:
-            mins = available_minutes * ratio
-            if mins >= 60:
-                end_t = clock_start + timedelta(minutes=mins)
-                time_budgets.append(end_t)
-
         for origin in starting_points:
-            k_weather = get_weather_factor(origin["lat"], origin["lon"])
+            k_weather      = get_weather_factor(origin["lat"], origin["lon"])
             base_unvisited = [p for p in all_points if p["id"] != origin["id"]]
-            
-            for end_t in time_budgets:
-                for score_fn, strat_name, max_wait in scorers:
-                    # Truyền max_wait vào quá trình build
-                    pts = build_route_greedy_custom(origin, base_unvisited, k_weather, end_t, score_fn, max_wait)
-                    try_add(pts, k_weather, strat_name, max_wait)
+
+            pool_near  = sorted(base_unvisited, key=lambda p: calc_dist(origin, p))
+            pool_value = sorted(base_unvisited, key=lambda p: -(p.get("score") or 0))
+
+            # ── Scorers với hành vi thực sự khác nhau ──
+            # BUG 1 FIX: "Theo sở thích" và "Cân bằng" giờ thực sự dùng preference_score
+            # (từ user_preference) trộn với distance theo đúng tỉ lệ pref_weight (từ weight).
+            # "Gần nhất" / "Nổi bật" vẫn giữ nguyên thuần khoảng cách / điểm đánh giá — đây
+            # là lựa chọn có chủ đích (người dùng có thể muốn xem route thuần "gần nhất"),
+            # không phải lỗi bỏ sót preference.
+            scorers = [
+                (lambda last, p, d: d,                                                         "🏃 Gần nhất"),
+                (lambda last, p, d: -(p.get("score") or 0),                                   "⭐ Nổi bật"),
+                (lambda last, p, d: d * (1 - pref_weight) + _preference_penalty(p) * pref_weight, "🧭 Theo sở thích của bạn"),
+                (lambda last, p, d: (d / ((p.get("score") or 1) + 1)) * (1 - pref_weight) + _preference_penalty(p) * pref_weight, "⚖️ Cân bằng"),
+                (lambda last, p, d: d + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "🌈 Đa dạng"),
+                (lambda last, p, d: -(p.get("score") or 0) + (80 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "🎯 Giá trị & đa dạng"),
+            ]
+
+            # ── Ngân sách thời gian: tạo lộ trình theo nhiều độ dài ──
+            # Tính số mốc thời gian dựa trên quỹ thực tế
+            min_budget = 60  # ít nhất 1 giờ
+            budget_ratios = [0.25, 0.35, 0.5, 0.65, 0.8, 1.0]
+            time_budgets = []
+            for ratio in budget_ratios:
+                mins = available_minutes * ratio
+                if mins >= min_budget:
+                    end_t = clock_start + timedelta(minutes=mins)
+                    hrs   = int(mins // 60)
+                    mns   = int(mins % 60)
+                    label_t = f"{hrs}h{mns:02d}" if hrs > 0 else f"{int(mins)}ph"
+                    time_budgets.append((end_t, label_t, ratio))
+
+            # ── MA TRẬN: Mỗi ngân sách × Mỗi scorer ──
+            for end_t, time_label, ratio in time_budgets:
+                for score_fn, strat_name in scorers:
+                    label = f"{strat_name} · {time_label}"
+                    try_add(
+                        build_route_greedy_custom(origin, base_unvisited, k_weather, end_t, score_fn),
+                        k_weather, label
+                    )
+
+                # Pool giới hạn chỉ áp dụng cho ngân sách ≥ 50%
+                if ratio >= 0.5:
+                    near_n = max(8, len(base_unvisited) // 3)
+                    val_n  = max(8, len(base_unvisited) // 3)
+                    try_add(build_route_greedy_custom(origin, pool_value[:val_n], k_weather, end_t,
+                                                       lambda last, p, d: d), k_weather, f"🏆 Top điểm · {time_label}")
+                    try_add(build_route_greedy_custom(origin, pool_near[:near_n], k_weather, end_t,
+                                                       lambda last, p, d: -(p.get("score") or 0)), k_weather, f"🗺️ Lân cận · {time_label}")
+
+            # ── Loại trừ điểm top → lộ trình thực sự khác biệt ──
+            for skip in range(min(5, len(pool_value))):
+                pool_excl = [p for p in base_unvisited if p["id"] != pool_value[skip]["id"]]
+                try_add(
+                    build_route_greedy_custom(origin, pool_excl, k_weather, clock_end,
+                                              lambda last, p, d: d / ((p.get("score") or 1) + 1)),
+                    k_weather, f"🔀 Thay thế #{skip+1}"
+                )
+
+            # ── Random sample nhiều seed ──
+            for seed in [7, 13, 42, 77, 99, 111, 123, 200]:
+                rng    = random.Random(seed)
+                # Thay đổi kích thước sample theo seed để đa dạng hơn
+                n      = max(6, int(len(base_unvisited) * (0.3 + (seed % 5) * 0.1)))
+                n      = min(n, len(base_unvisited))
+                sample = rng.sample(base_unvisited, n)
+                try_add(
+                    build_route_greedy_custom(origin, sample, k_weather, clock_end,
+                                              lambda last, p, d: d / ((p.get("score") or 1) + 1)),
+                    k_weather, f"🎲 Khám phá #{seed}"
+                )
 
         return generated
 
-    generated_routes = generate_routes_with_factor()
-    
-    if len(generated_routes) == 0:
-        raise HTTPException(status_code=400, detail="Các địa điểm gần bạn chưa mở cửa vào khung giờ này (hoặc thời gian đi quá ngắn). Vui lòng thử dời giờ xuất phát!")
 
-    generated_routes.sort(key=lambda r: (-len(r["optimized_route"]), r["total_time_minutes"]))
-    for i, r in enumerate(generated_routes): r["route_id"] = i + 1
+
+    # BUG 5 FIX (tiếp): trước đây hệ thống phải "thử lại" toàn bộ route generation
+    # với k_density=1.0 nếu không sinh được route nào, vì hệ số congestion tĩnh có
+    # thể chặn nhầm toàn bộ route hợp lệ. Giờ congestion được tính ĐỘNG theo từng
+    # chặng/thời điểm thực tế nên không còn cần cơ chế thử-lại "giả định không tắc
+    # đường" này nữa — chỉ cần sinh route một lần với dữ liệu thời gian thực.
+    generated_routes = generate_routes_with_factor()
+
+    if len(generated_routes) == 0:
+        return {"status": "error", "message": "Quỹ thời gian quá ngắn hoặc các địa điểm đều chưa mở cửa vào khung giờ này!"}
+
+    # Sắp xếp lộ trình: nhiều điểm tham quan hơn trước, rồi thời gian ngắn hơn, rồi
+    # (tie-breaker) route phù hợp sở thích người dùng hơn được ưu tiên hiển thị trước.
+    generated_routes.sort(key=lambda r: (-len(r["optimized_route"]), r["total_time_minutes"], -r.get("avg_preference_score", 0.5)))
+    for i, r in enumerate(generated_routes):
+        r["route_id"] = i + 1
+        # Tên fallback "Lộ trình N" phải khớp route_id cuối cùng sau khi sắp xếp lại.
+        if r.get("route_name", "").startswith("Lộ trình "):
+            r["route_name"] = f"Lộ trình {i + 1}"
 
     return {
         "status": "success",
@@ -541,5 +831,7 @@ async def optimize_route(request: OptimizationRequest):
         "vehicle_type": request.vehicle_type,
         "vehicle_note": vehicle_note,
         "accessible_locations_count": len(all_points),
+        "user_preference": request.user_preference,
+        "weight": request.weight,
         "routes": generated_routes
     }
