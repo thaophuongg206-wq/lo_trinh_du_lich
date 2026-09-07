@@ -106,6 +106,22 @@
                 <button id="btn-optimize" class="btn btn-warning w-100 fw-bold shadow-sm p-3 rounded-pill btn-vintage">
                     <i class="fa-solid fa-wand-magic-sparkles"></i> Tìm lộ trình tối ưu
                 </button>
+
+                <!-- Bắt đầu Admin Tool Upload -->
+                <div class="card mt-3 border-secondary shadow-sm">
+                    <div class="card-header bg-secondary text-white py-2" style="font-size: 0.9rem; font-weight: 500;">
+                        <i class="fa-solid fa-file-excel"></i> Admin: Import Dữ Liệu
+                    </div>
+                    <div class="card-body p-3">
+                        <input type="file" id="excel_file" class="form-control form-control-sm mb-2" accept=".xlsx, .xls">
+                        <button id="btn-upload-excel" class="btn btn-sm btn-outline-secondary w-100 fw-bold">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Tải lên CSDL
+                        </button>
+                        <div id="upload-status" class="mt-2 text-center" style="font-size: 0.85rem;"></div>
+                    </div>
+                </div>
+                <!-- Kết thúc Admin Tool Upload -->
+
             </div>
 
             <!-- PANEL BÊN PHẢI -->
@@ -141,4 +157,4 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="app.js"></script>
 </body>
-</html> 
+</html>
