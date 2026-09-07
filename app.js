@@ -12,8 +12,10 @@ $(document).ready(function () {
     let currentLocationMarker = null;  // Marker vị trí hiện tại của người dùng (GPS hoặc Geocode địa chỉ)
     let currentLocationData = null;    // { lat, lon } nếu dùng GPS
 
-    // Tự động set ngày hôm nay + chặn không cho chọn ngày quá khứ
-    const today = new Date().toISOString().split('T')[0];
+    // Tự động set ngày hôm nay + chặn không cho chọn ngày quá khứ (Chuẩn giờ Local)
+    const now = new Date();
+    // Bù trừ độ lệch múi giờ (Timezone Offset) để luôn ra đúng ngày VN
+    const today = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
     $('#trip_date').val(today);
     $('#trip_date').attr('min', today);  // Ngày tối thiểu = hôm nay
 
@@ -457,8 +459,20 @@ $(document).ready(function () {
         });
 
         if (routeLocs.length > 1) {
-            const coordsString = routeLocs.map(loc => `${loc.lon},${loc.lat}`).join(';');
-            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`;
+                    const coordsString = routeLocs.map(loc => `${loc.lon},${loc.lat}`).join(';');
+                    
+                    // Kiểm tra phương tiện đang chọn để gọi đúng Profile của OSRM
+                    let osrmProfile = 'driving'; // Mặc định cho ô tô / xe máy
+                    const selectedVehicle = $('#vehicle_type').val();
+                    
+                    if (selectedVehicle === 'di_bo') {
+                        osrmProfile = 'foot';
+                    } else if (selectedVehicle === 'xe_dap') {
+                        osrmProfile = 'cycling';
+                    }
+
+                    // Gắn osrmProfile động vào link API
+                    const osrmUrl = `https://router.project-osrm.org/route/v1/${osrmProfile}/${coordsString}?overview=full&geometries=geojson`;
 
             $.ajax({
                 url: osrmUrl,
