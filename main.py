@@ -5,13 +5,21 @@ import math
 import random
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
+import io
+import pandas as pd
+import numpy as np
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Routing Optimization API")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 import sqlite3
@@ -240,7 +248,7 @@ async def optimize_route(request: OptimizationRequest):
     query = """
         SELECT d.id, d.ten, d.vi_do, d.kinh_do, d.thoi_gian_tham_quan_phut, d.diem_gia_tri, d.loai_hinh,
                c.gio_mo_cua, c.gio_dong_cua,
-               d.mo_ta, d.thong_tin_chi_tiet, d.review, d.phu_hop,
+               d.mo_ta, d.thong_tin_chi_tiet, d.review, d.phu_hop, d.url_hinh_anh,
                COALESCE(d.cap_do_tiep_can, 3) AS cap_do_tiep_can
         FROM DIA_DIEM d
         LEFT JOIN CUA_SO_THOI_GIAN c ON d.id = c.dia_diem_id
@@ -248,7 +256,7 @@ async def optimize_route(request: OptimizationRequest):
     cursor.execute(query)
     rows = fetch_all_dict(cursor, db_type)
     conn.close()
-    
+
     all_points = []
     default_open = datetime.strptime("00:00", "%H:%M").time()
     default_close = datetime.strptime("23:59", "%H:%M").time()
@@ -265,9 +273,9 @@ async def optimize_route(request: OptimizationRequest):
             "open_time": open_time, "close_time": close_time,
             "mo_ta": r["mo_ta"] or "", "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
             "review": r["review"] or "", "phu_hop": r["phu_hop"] or "",
+            "url_hinh_anh": r["url_hinh_anh"] or "",
             "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
         }
-        # TÍNH ĐIỂM GU TRẢI NGHIỆM TỪ NLP NGAY TỪ ĐẦU
         point_data["pref_match"] = calculate_preference_score(point_data, request.user_preference)
         all_points.append(point_data)
 
@@ -286,15 +294,14 @@ async def optimize_route(request: OptimizationRequest):
         }
         all_points_with_gps = [gps_point] + all_points
         global_matrix = get_global_osrm_matrix(all_points_with_gps, vehicle_type=request.vehicle_type)
-        all_points = all_points_with_gps   
-        starting_points = [gps_point]      
+        all_points = all_points_with_gps
+        starting_points = [gps_point]
     elif request.start_point and request.start_point.strip():
         keyword = request.start_point.strip().lower()
         matched_points = [p for p in all_points if keyword in p["ten"].lower()]
         if matched_points:
             starting_points = matched_points[:1]
         else:
-            # ĐÃ FIX: Chặn lỗi không báo khi gõ sai địa chỉ
             return {"status": "error", "message": f"Không tìm thấy địa điểm '{request.start_point}' trong cơ sở dữ liệu. Vui lòng thử từ khóa khác hoặc dùng GPS!"}
     else:
         starting_points = all_points[:3]
@@ -312,9 +319,8 @@ async def optimize_route(request: OptimizationRequest):
         )
 
         dropped_point = False
-        # ĐÃ FIX: Xóa điểm cuối cùng gây tràn giờ thay vì xóa điểm xa nhất
         while best_cost >= 10000 and len(best_route_indices) > 2:
-            best_route_indices.pop() 
+            best_route_indices.pop()
             dropped_point = True
             best_route_indices, best_cost = two_opt_algorithm(
                 best_route_indices, global_matrix, selected_points,
@@ -343,16 +349,17 @@ async def optimize_route(request: OptimizationRequest):
                 wait_time = (p_open - simulated_clock).total_seconds() / 60
                 simulated_clock = p_open
 
-            arrive_time_str = simulated_clock.strftime("%H:%M")   
-            visit_time = point["time"]  # Không nhân hệ số
+            arrive_time_str = simulated_clock.strftime("%H:%M")
+            visit_time = point["time"]
             simulated_clock += timedelta(minutes=visit_time)
-            depart_time_str = simulated_clock.strftime("%H:%M")   
+            depart_time_str = simulated_clock.strftime("%H:%M")
 
             final_route_details.append({
                 "id": point["id"], "ten": point["ten"], "lat": point["lat"], "lon": point["lon"],
                 "loai_hinh": point.get("loai_hinh", ""), "mo_ta": point.get("mo_ta", ""),
                 "thong_tin_chi_tiet": point.get("thong_tin_chi_tiet", ""), "review": point.get("review", ""),
-                "phu_hop": point.get("phu_hop", ""), "visit_time": round(visit_time, 1), "wait_time": round(wait_time, 1),
+                "phu_hop": point.get("phu_hop", ""), "url_hinh_anh": point.get("url_hinh_anh", ""),
+                "visit_time": round(visit_time, 1), "wait_time": round(wait_time, 1),
                 "arrive_time": arrive_time_str, "depart_time": depart_time_str, "travel_to_next": 0, "distance_to_next": 0
             })
 
@@ -374,32 +381,31 @@ async def optimize_route(request: OptimizationRequest):
         }
 
     def build_route_greedy_custom(origin, candidate_pool, k_total, end_clock, score_fn):
-        origin_open  = datetime.combine(base_date, origin["open_time"])
+        origin_open = datetime.combine(base_date, origin["open_time"])
         origin_close = datetime.combine(base_date, origin["close_time"])
         current_clock = max(clock_start, origin_open)
         departure = current_clock + timedelta(minutes=origin["time"])
         if departure > origin_close or departure > end_clock: return None
-        
-        selected  = [origin]
+
+        selected = [origin]
         unvisited = list(candidate_pool)
         while True:
             best_next, best_score, best_dep = None, float('inf'), departure
             for p in unvisited:
                 dyn_dens = get_dynamic_density_factor(departure)
-                # ĐÃ FIX: Truyền trực tiếp thời gian OSRM thực tế (est_travel) vào hàm chấm điểm
                 try:
                     est_travel = global_matrix[selected[-1]["id"]][p["id"]]["duration"] * dyn_dens
                 except (KeyError, TypeError):
                     dist = calc_dist(selected[-1], p)
                     est_travel = (dist / 20.0) * 60 * k_total * dyn_dens
-                    
-                est_visit  = p["time"]
-                arrival    = departure + timedelta(minutes=est_travel)
-                p_open     = datetime.combine(base_date, p["open_time"])
-                p_close    = datetime.combine(base_date, p["close_time"])
-                sv         = max(arrival, p_open)
-                nd         = sv + timedelta(minutes=est_visit)
-                
+
+                est_visit = p["time"]
+                arrival = departure + timedelta(minutes=est_travel)
+                p_open = datetime.combine(base_date, p["open_time"])
+                p_close = datetime.combine(base_date, p["close_time"])
+                sv = max(arrival, p_open)
+                nd = sv + timedelta(minutes=est_visit)
+
                 if nd <= p_close and nd <= end_clock:
                     sc = score_fn(selected[-1], p, est_travel)
                     if sc < best_score:
@@ -427,11 +433,9 @@ async def optimize_route(request: OptimizationRequest):
                 r["route_id"] = len(generated) + 1
                 generated.append(r)
 
-        # XỬ LÝ TRỌNG SỐ (WEIGHT) GIỮA THỜI GIAN VÀ TRẢI NGHIỆM
-        w_exp = request.weight / 100.0  # (Từ 0.0 đến 1.0)
+        w_exp = request.weight / 100.0
         w_time = 1.0 - w_exp
 
-        # Cost càng nhỏ càng tốt. (est_travel là cost, score/pref_match là lợi ích cần trừ đi)
         scorers = [
             (lambda last, p, travel: (travel * w_time) - ((p.get("score",0) + p.get("pref_match",0)*2) * 5 * w_exp), "⚖️ Cân bằng"),
             (lambda last, p, travel: (travel * w_time) + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0) - ((p.get("score",0) + p.get("pref_match",0)*2) * 5 * w_exp), "🌈 Đa dạng"),
@@ -460,7 +464,6 @@ async def optimize_route(request: OptimizationRequest):
                     label = f"{strat_name} · {time_label}"
                     try_add(build_route_greedy_custom(origin, base_unvisited, k_total, end_t, score_fn), k_weather, label)
 
-            # Random khám phá để đa dạng
             for seed in [13, 42, 99, 123]:
                 rng = random.Random(seed)
                 n = min(max(6, int(len(base_unvisited) * 0.4)), len(base_unvisited))
@@ -482,3 +485,60 @@ async def optimize_route(request: OptimizationRequest):
         "vehicle_note": vehicle_note, "accessible_locations_count": len(all_points),
         "routes": generated_routes
     }
+
+@app.post("/api/admin/import-excel")
+async def import_excel_tool(file: UploadFile = File(...)):
+    try:
+        # Đọc dữ liệu từ file upload
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents)).replace({np.nan: None})
+        
+        # Kết nối SQLite (dulich.db)
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        inserted_count = 0
+        updated_count = 0
+        
+        for index, row in df.iterrows():
+            ten = str(row.get('ten', '')).strip()
+            if not ten or ten == 'None':
+                continue
+                
+            vi_do = row.get('vi_do')
+            kinh_do = row.get('kinh_do')
+            loai_hinh = row.get('loai_hinh')
+            diem_gia_tri = row.get('diem_gia_tri')
+            thoi_gian_tham_quan_phut = row.get('thoi_gian_tham_quan_phut')
+            url_hinh_anh = row.get('url_hinh_anh')
+            
+            # Kiểm tra địa điểm đã có chưa
+            cursor.execute("SELECT id FROM DIA_DIEM WHERE ten = ?", (ten,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Nếu có -> UPDATE
+                cursor.execute("""
+                    UPDATE DIA_DIEM 
+                    SET vi_do=?, kinh_do=?, loai_hinh=?, diem_gia_tri=?, thoi_gian_tham_quan_phut=?, url_hinh_anh=?
+                    WHERE ten=?
+                """, (vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh, ten))
+                updated_count += 1
+            else:
+                # Nếu chưa có -> INSERT
+                cursor.execute("""
+                    INSERT INTO DIA_DIEM (ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh, cap_do_tiep_can)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 3)
+                """, (ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh))
+                inserted_count += 1
+                
+        conn.commit()
+        conn.close()
+        
+        return {
+            "status": "success", 
+            "message": f"Hoàn tất! Đã thêm mới {inserted_count} và cập nhật {updated_count} địa điểm."
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi đọc file: {str(e)}"}
