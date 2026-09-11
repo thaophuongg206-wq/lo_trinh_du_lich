@@ -5,15 +5,29 @@ import requests
 import pyodbc
 import math
 import random
+import io
+import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel, field_validator
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, UploadFile, File
+import io
+import pandas as pd
+import numpy as np
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Routing Optimization API")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 import sqlite3
@@ -583,7 +597,7 @@ def fetch_all_points(vehicle_type: str = None):
     query = """
         SELECT d.id, d.ten, d.vi_do, d.kinh_do, d.thoi_gian_tham_quan_phut, d.diem_gia_tri, d.loai_hinh,
                c.gio_mo_cua, c.gio_dong_cua,
-               d.mo_ta, d.thong_tin_chi_tiet, d.review, d.phu_hop,
+               d.mo_ta, d.thong_tin_chi_tiet, d.review, d.phu_hop, d.url_hinh_anh,
                COALESCE(d.cap_do_tiep_can, 3) AS cap_do_tiep_can
         FROM DIA_DIEM d
         LEFT JOIN CUA_SO_THOI_GIAN c ON d.id = c.dia_diem_id
@@ -611,7 +625,12 @@ def fetch_all_points(vehicle_type: str = None):
             "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
             "review": r["review"] or "",
             "phu_hop": r["phu_hop"] or "",
+            "url_hinh_anh": r["url_hinh_anh"] or "",
             "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
+        }
+        point_data["pref_match"] = calculate_preference_score(point_data, request.user_preference)
+        all_points.append(point_data)
+
         })
 
     if vehicle_type:
@@ -814,7 +833,8 @@ async def optimize_route(request: OptimizationRequest):
                 "mo_ta": point.get("mo_ta", ""),
                 "thong_tin_chi_tiet": point.get("thong_tin_chi_tiet", ""),
                 "review": point.get("review", ""),
-                "phu_hop": point.get("phu_hop", ""),
+                "phu_hop": point.get("phu_hop", ""), "url_hinh_anh": point.get("url_hinh_anh", ""),
+               
                 "visit_time": round(visit_time, 1),
                 "wait_time": round(wait_time, 1),
                 "arrive_time": arrive_time_str,
@@ -924,6 +944,15 @@ async def optimize_route(request: OptimizationRequest):
                 seen_fingerprints.add(fp)
                 r["route_id"] = len(generated) + 1
                 generated.append(r)
+
+        w_exp = request.weight / 100.0
+        w_time = 1.0 - w_exp
+
+        scorers = [
+            (lambda last, p, travel: (travel * w_time) - ((p.get("score",0) + p.get("pref_match",0)*2) * 5 * w_exp), "⚖️ Cân bằng"),
+            (lambda last, p, travel: (travel * w_time) + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0) - ((p.get("score",0) + p.get("pref_match",0)*2) * 5 * w_exp), "🌈 Đa dạng"),
+            (lambda last, p, travel: travel - (p.get("pref_match",0) * 15 * w_exp), "🎯 Đúng gu trải nghiệm")
+        ]
 
         for origin in starting_points:
             k_weather      = get_weather_factor(origin["lat"], origin["lon"])
@@ -1072,10 +1101,59 @@ async def optimize_route(request: OptimizationRequest):
         "routes": generated_routes
     }
 
-# ============================================================
-# Gắn router AI (Task 2.2 — Ollama + RAG). Import ở cuối file để tránh
-# vòng lặp import (ai_advisor.py import fetch_all_points từ main lúc gọi,
-# không phải lúc load module).
-# ============================================================
-from ai_advisor import router as ai_router
-app.include_router(ai_router)
+@app.post("/api/admin/import-excel")
+async def import_excel_tool(file: UploadFile = File(...)):
+    try:
+        # Đọc dữ liệu từ file upload
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents)).replace({np.nan: None})
+        
+        # Kết nối SQLite (dulich.db)
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        inserted_count = 0
+        updated_count = 0
+        
+        for index, row in df.iterrows():
+            ten = str(row.get('ten', '')).strip()
+            if not ten or ten == 'None':
+                continue
+                
+            vi_do = row.get('vi_do')
+            kinh_do = row.get('kinh_do')
+            loai_hinh = row.get('loai_hinh')
+            diem_gia_tri = row.get('diem_gia_tri')
+            thoi_gian_tham_quan_phut = row.get('thoi_gian_tham_quan_phut')
+            url_hinh_anh = row.get('url_hinh_anh')
+            
+            # Kiểm tra địa điểm đã có chưa
+            cursor.execute("SELECT id FROM DIA_DIEM WHERE ten = ?", (ten,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Nếu có -> UPDATE
+                cursor.execute("""
+                    UPDATE DIA_DIEM 
+                    SET vi_do=?, kinh_do=?, loai_hinh=?, diem_gia_tri=?, thoi_gian_tham_quan_phut=?, url_hinh_anh=?
+                    WHERE ten=?
+                """, (vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh, ten))
+                updated_count += 1
+            else:
+                # Nếu chưa có -> INSERT
+                cursor.execute("""
+                    INSERT INTO DIA_DIEM (ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh, cap_do_tiep_can)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 3)
+                """, (ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh))
+                inserted_count += 1
+                
+        conn.commit()
+        conn.close()
+        
+        return {
+            "status": "success", 
+            "message": f"Hoàn tất! Đã thêm mới {inserted_count} và cập nhật {updated_count} địa điểm."
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi đọc file: {str(e)}"}

@@ -241,6 +241,13 @@ $(document).ready(function () {
                     $('#result-panel').addClass('d-none');             
                     const $container = $('#cards-container').empty();
 
+                    const emotionTags = [
+                        "Hơi thở thiên nhiên & Sống chậm",
+                        "Không gian hoài niệm & Chữa lành",
+                        "Khám phá góc phố & Check-in",
+                        "Trải nghiệm trọn vẹn nhịp sống đô thị"
+                    ];
+
                     const retroImages = [
                         "https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=300&q=80",
                         "https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=300&q=80",
@@ -262,14 +269,38 @@ $(document).ready(function () {
                         let summarySpots = route.optimized_route.map(p => p.ten).slice(0, 3).join(" ➔ ");
                         if(numPoints > 3) summarySpots += " ...";
                         
-                        // 3. Render Card với thiết kế 3 ảnh ghép
+                        // 3. Lọc bỏ "Vị trí của bạn" để chỉ lấy ảnh các điểm tham quan thực tế
+                        const visitSpots = route.optimized_route.filter(p => p.id !== "gps_current" && p.loai_hinh !== "diem_xuat_phat");
+                        
+                        let imagesHtml = '';
+                        if (visitSpots.length === 0) {
+                            imagesHtml = `<img src="https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=500&q=80" style="width: 100%; object-fit: cover;" alt="Mặc định">`;
+                        } else if (visitSpots.length === 1) {
+                            imagesHtml = `<img src="${visitSpots[0].url_hinh_anh || 'https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=500&q=80'}" style="width: 100%; object-fit: cover;" alt="Điểm 1">`;
+                        } else if (visitSpots.length === 2) {
+                            const img1 = visitSpots[0].url_hinh_anh || 'https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=300&q=80';
+                            const img2 = visitSpots[1].url_hinh_anh || 'https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=300&q=80';
+                            imagesHtml = `
+                                <img src="${img1}" style="width: 50%; object-fit: cover;" alt="Điểm 1">
+                                <img src="${img2}" style="width: 50%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 2">
+                            `;
+                        } else {
+                            const img1 = visitSpots[0].url_hinh_anh || 'https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=300&q=80';
+                            const img2 = visitSpots[1].url_hinh_anh || 'https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=300&q=80';
+                            const img3 = visitSpots[2].url_hinh_anh || 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=300&q=80';
+                            imagesHtml = `
+                                <img src="${img1}" style="width: 33.33%; object-fit: cover;" alt="Điểm 1">
+                                <img src="${img2}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 2">
+                                <img src="${img3}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 3">
+                            `;
+                        }
+
+                        // 4. Render Card với thiết kế ảnh động
                         $container.append(`
                             <div class="col-md-6 mb-3">
                                 <div class="card h-100 shadow-sm emotion-card border-0 rounded-4 overflow-hidden" data-index="${index}" style="cursor: pointer;">
                                     <div class="d-flex" style="height: 140px;">
-                                        <img src="${retroImages[0]}" style="width: 33.33%; object-fit: cover;" alt="Điểm 1">
-                                        <img src="${retroImages[1]}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 2">
-                                        <img src="${retroImages[2]}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 3">
+                                        ${imagesHtml}
                                     </div>
                                     <div class="card-body p-3 bg-white">
                                         <h6 class="card-title fw-bold text-dark mb-2">${title}</h6>
@@ -284,7 +315,7 @@ $(document).ready(function () {
                                 </div>
                             </div>
                         `);
-                    }); // 
+                    });
 
                 } else {
                     alert(res.message);
@@ -510,9 +541,44 @@ $(document).ready(function () {
     }).on('mouseleave', '.emotion-card', function() {
         $(this).css({'transform': 'translateY(0)', 'border-color': 'transparent'});
     });
+    
     // Sự kiện nút Quay lại màn hình Card
     $(document).on('click', '#btn-back-cards', function() {
         $('#result-panel').addClass('d-none');
         $('#emotion-cards-overlay').removeClass('d-none');
+    });
+
+    // --- ADMIN TOOL: UPLOAD EXCEL ---
+    $('#btn-upload-excel').on('click', function() {
+        const fileInput = document.getElementById('excel_file');
+        if (!fileInput || fileInput.files.length === 0) {
+            alert('Vui lòng chọn file Excel chứa danh sách địa điểm!');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+        
+        const $status = $('#upload-status');
+        $status.html('<span class="text-primary"><i class="fa-solid fa-spinner fa-spin"></i> Đang xử lý CSDL...</span>');
+        
+        $.ajax({
+            url: 'http://127.0.0.1:8000/api/admin/import-excel',
+            method: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function(res) {
+                if(res.status === "success") {
+                    $status.html(`<span class="text-success fw-bold"><i class="fa-solid fa-check"></i> ${res.message}</span>`);
+                    fileInput.value = ''; // Xóa file đã chọn sau khi up xong
+                } else {
+                    $status.html(`<span class="text-danger fw-bold"><i class="fa-solid fa-xmark"></i> ${res.message}</span>`);
+                }
+            },
+            error: function() {
+                $status.html('<span class="text-danger fw-bold"><i class="fa-solid fa-xmark"></i> Lỗi kết nối Backend!</span>');
+            }
+        });
     });
 });
