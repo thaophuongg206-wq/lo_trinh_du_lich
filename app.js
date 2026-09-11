@@ -248,11 +248,25 @@ $(document).ready(function () {
                         "Trải nghiệm trọn vẹn nhịp sống đô thị"
                     ];
 
-                    const retroImages = [
-                        "https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=300&q=80",
-                        "https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=300&q=80",
-                        "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=300&q=80"
-                    ];
+                   const defaultImg = "https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=500&q=80";
+
+                    let imagesHtml = '';
+                    if (visitSpots.length === 0) {
+                        imagesHtml = `<img src="${defaultImg}" style="width: 100%; object-fit: cover;" alt="Mặc định">`;
+                    } else if (visitSpots.length === 1) {
+                        imagesHtml = `<img src="${visitSpots[0].url_hinh_anh || defaultImg}" style="width: 100%; object-fit: cover;" alt="Điểm 1">`;
+                    } else if (visitSpots.length === 2) {
+                        imagesHtml = `
+                            <img src="${visitSpots[0].url_hinh_anh || defaultImg}" style="width: 50%; object-fit: cover;" alt="Điểm 1">
+                            <img src="${visitSpots[1].url_hinh_anh || defaultImg}" style="width: 50%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 2">
+                        `;
+                    } else {
+                        imagesHtml = `
+                            <img src="${visitSpots[0].url_hinh_anh || defaultImg}" style="width: 33.33%; object-fit: cover;" alt="Điểm 1">
+                            <img src="${visitSpots[1].url_hinh_anh || defaultImg}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 2">
+                            <img src="${visitSpots[2].url_hinh_anh || defaultImg}" style="width: 33.33%; object-fit: cover; border-left: 2px solid white;" alt="Điểm 3">
+                        `;
+                    }
 
                     generatedRoutes.forEach((route, index) => {
                         // BUG 3 FIX: tên lộ trình do Backend quyết định dựa trên đặc điểm

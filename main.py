@@ -13,12 +13,6 @@ from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel, field_validator
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, UploadFile, File
-import io
-import pandas as pd
-import numpy as np
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Routing Optimization API")
 app.add_middleware(
@@ -407,8 +401,6 @@ def calculate_cost_with_clock(route_indices, matrix_dict, points_data, k_weather
     total_minutes = (current_clock - clock_start_dt).total_seconds() / 60
     return total_minutes + penalty, violation_index
 
-    return best_route, best_cost, best_violation_idx
-
 def or_opt_pass(route, matrix_dict, points_data, k_weather, vehicle_type, clock_start_dt, clock_end_dt, base_date):
     """
     Cải tiến bổ sung cho 2-opt: 2-opt chỉ đảo NGƯỢC một đoạn liên tiếp, nên có những
@@ -617,21 +609,18 @@ def fetch_all_points(vehicle_type: str = None):
         if isinstance(open_time, str): open_time = datetime.strptime(open_time[:5], "%H:%M").time()
         if isinstance(close_time, str): close_time = datetime.strptime(close_time[:5], "%H:%M").time()
 
-        all_points.append({
-            "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"],
-            "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
-            "open_time": open_time, "close_time": close_time,
-            "mo_ta": r["mo_ta"] or "",
-            "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
-            "review": r["review"] or "",
-            "phu_hop": r["phu_hop"] or "",
-            "url_hinh_anh": r["url_hinh_anh"] or "",
-            "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
-        }
-        point_data["pref_match"] = calculate_preference_score(point_data, request.user_preference)
-        all_points.append(point_data)
-
-        })
+        point_data = {
+    "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"],
+    "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
+    "open_time": open_time, "close_time": close_time,
+    "mo_ta": r["mo_ta"] or "",
+    "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
+    "review": r["review"] or "",
+    "phu_hop": r["phu_hop"] or "",
+    "url_hinh_anh": r["url_hinh_anh"] or "",
+    "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
+}
+    all_points.append(point_data)
 
     if vehicle_type:
         max_access = VEHICLE_ACCESS_LEVEL.get(vehicle_type, 3)
@@ -689,6 +678,11 @@ async def optimize_route(request: OptimizationRequest):
 
     if request.start_lat is not None and request.start_lon is not None:
         # TRƯỜNG HỢP 1: Người dùng dùng GPS → tạo điểm ảo "Vị trí hiện tại"
+
+        # Khai báo thời gian hoạt động mặc định cho điểm GPS
+        default_open = datetime.strptime("00:00", "%H:%M").time()
+        default_close = datetime.strptime("23:59", "%H:%M").time()
+
         # Điểm này không có trong DB, thời gian tham quan = 0 phút
         gps_point = {
             "id": "gps_current",

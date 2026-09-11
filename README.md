@@ -1,36 +1,25 @@
-# Routing Optimization API - Backend (Du Lịch Thông Minh)
+# Dự Án: Hệ thống Tư vấn & Tối ưu Lộ trình Du lịch Thông Minh
 
-Hệ thống API hỗ trợ tối ưu hóa lộ trình du lịch dựa trên ma trận khoảng cách thực tế (OSRM), yếu tố thời tiết (Open-Meteo) và thuật toán 2-Opt.
+Dự án cung cấp giải pháp lập kế hoạch du lịch toàn diện, kết hợp AI tạo sinh (Local LLM) để tư vấn hành trình và thuật toán Quy hoạch động (Bitmask DP) / Heuristic để tối ưu đường đi theo thời gian thực (tránh kẹt xe, khung giờ cấm).
 
-## 🚀 Công nghệ sử dụng
-* **Language:** Python 3.x
-* **Framework:** FastAPI, Uvicorn
-* **Database:** Microsoft SQL Server (`pyodbc`)
-* **External APIs:** OSRM (Routing), Open-Meteo (Weather)
+## 🛠 Cấu trúc hệ thống & Luồng hoạt động
 
-## 🛠️ Hướng dẫn cài đặt & Chạy ứng dụng
+Dự án được chia thành 4 bước chạy nối tiếp nhau:
 
-1. **Kích hoạt môi trường ảo (venv):**
-   ```bash
-   .\venv\Scripts\activate
-   ```
+### Bước 1: Thu thập dữ liệu sạch (Data Pipeline)
+- Chạy `python crawl_serpapi_maps.py` để lấy rating, reviews mới nhất và link ảnh độ phân giải cao từ Google Maps (lưu ra file `places_output.csv`).
 
-2. **Cài đặt thư viện:**
-   ```bash
-   pip install fastapi uvicorn requests pyodbc
-   ```
+### Bước 2: Nhập & Tiền xử lý Dữ liệu (Database)
+- Khởi động backend, sử dụng Admin Tool trên giao diện Frontend để upload file CSV/Excel vào CSDL SQLite (`dulich.db`).
+- Chạy `python clean_data.py` để loại bỏ HTML rác, khoảng trắng thừa, chuẩn bị "nguyên liệu sạch" cho AI phân tích.
 
-3. **Cấu hình Database:**
-   * Mở SQL Server Management Studio (SSMS).
-   * Chạy file `DuLichThongMinh.sql` để khởi tạo Database `DuLichThongMinh` và bảng `DIA_DIEM`.
+### Bước 3: Khởi động Trợ lý AI (LLM & RAG)
+- Chạy file `setup_ai.bat` (yêu cầu máy có cài Docker).
+- Hệ thống sẽ tự động khởi tạo server Ollama và pull model `llama3.2`. 
+- API nội bộ sẽ chạy tại: `http://localhost:11434`
 
-4. **Khởi chạy Server FastAPI:**
-   ```bash
-   uvicorn main:app --reload
-   ```
-   * Server sẽ chạy tại địa chỉ: `[http://127.0.0.1:8000](http://127.0.0.1:8000)`
-   * Trang tài liệu API (Swagger UI): `[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)`
-
-## 📌 Danh sách API Chính
-* `GET /api/locations`: Lấy danh sách toàn bộ địa điểm từ CSDL.
-* `POST /api/optimize-route`: Tính toán và trả về lộ trình tối ưu theo khung thời gian.
+### Bước 4: Khởi động Máy chủ Tối ưu (FastAPI Backend)
+Yêu cầu cài đặt thư viện: `pip install fastapi uvicorn requests pyodbc pandas openpyxl`
+- Chạy lệnh khởi động: 
+  ```bash
+  uvicorn main:app --reload
