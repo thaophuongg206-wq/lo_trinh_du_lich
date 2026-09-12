@@ -13,7 +13,7 @@ CÁCH CHẠY
 File này KHÔNG định nghĩa FastAPI app mới, mà IMPORT app đã có sẵn trong
 main.py rồi gắn thêm 1 route mới vào chính app đó, nên bạn chạy:
 
-    uvicorn nsga2_module:app --reload --port 8000
+    uvicorn OnlyNSGA:app --reload --port 8000
 
 (thay vì `uvicorn main:app`) — mọi endpoint cũ của main.py (bao gồm
 /api/optimize-route, /api/locations) vẫn hoạt động bình thường, cộng thêm
@@ -38,41 +38,36 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple, Optional
 
+# Đã bỏ get_density_factor khỏi import để tránh lỗi
 from main import (
     app,
     get_db_connection,
     get_global_osrm_matrix,
     get_weather_factor,
-    get_density_factor,
     get_large_vehicle_restriction_factor,
     OptimizationRequest,
 )
 
+# Hàm dự phòng thay thế cho get_density_factor bị thiếu trong main.py
+def get_density_factor(start_time_str: str) -> float:
+    """Hệ số mật độ thời gian tham quan mặc định."""
+    return 1.0
+
 
 # =====================================================================
 # 1. HÀM PHỤ TRỢ DÙNG CHUNG QUY ƯỚC DỮ LIỆU CỦA main.py
-#    (point = dict với các khoá: id, ten, lat, lon, time, score, loai_hinh,
-#     open_time, close_time — giống hệt all_points trong main.py)
 # =====================================================================
 
 def _calc_dist_km(p1: dict, p2: dict) -> float:
-    """Ước tính khoảng cách Euclid (km) — dùng để seed quần thể ban đầu,
-    cùng công thức calc_dist() trong main.py."""
     return math.sqrt((p1["lat"] - p2["lat"]) ** 2 + (p1["lon"] - p2["lon"]) ** 2) * 111
 
 
 def _travel_minutes(p1: dict, p2: dict, matrix_dict: dict, k_total: float) -> float:
-    """Thời gian di chuyển thật (phút) từ ma trận OSRM, đã nhân k_total
-    (= k_weather * k_restriction) — CÙNG cách nhân hệ số như finalize_route()
-    và two_opt_algorithm() trong main.py (chúng gọi calculate_cost_with_clock
-    với tham số 'k_weather' nhưng thực chất truyền vào là k_total)."""
     return matrix_dict[p1["id"]][p2["id"]]["duration"] * k_total
 
 
 # =====================================================================
-# 2. REPAIR + ĐÁNH GIÁ MỤC TIÊU (mục 3.2, 3.3 trong tài liệu)
-#    Repair mô phỏng lại đúng logic mô phỏng đồng hồ mà
-#    calculate_cost_with_clock() / finalize_route() dùng trong main.py.
+# 2. REPAIR + ĐÁNH GIÁ MỤC TIÊU 
 # =====================================================================
 
 def repair_route(
@@ -85,12 +80,6 @@ def repair_route(
     clock_end: datetime,
     base_date,
 ) -> List[int]:
-    """
-    Duyệt tuần tự route, loại bỏ điểm nào vi phạm khung giờ mở cửa hoặc vượt
-    quá clock_end. Điểm đầu tiên (origin, index 0 của points_data cục bộ)
-    luôn được giữ; nếu bản thân origin đã vi phạm thì trả về route chỉ có
-    origin (route không hợp lệ, sẽ bị loại ở bước đánh giá).
-    """
     if not route_indices:
         return route_indices
 
@@ -121,12 +110,11 @@ def repair_route(
         if visit_end <= p_close and visit_end <= clock_end:
             valid.append(idx)
             clock = visit_end
-        # else: bỏ điểm vi phạm, thử điểm kế tiếp trong route (đúng REPAIR)
 
     return valid
 
 
-OBJECTIVE_IS_MAX = (True, False, True, True)  # (f1 điểm, f2 tgian di chuyển, f3 số điểm, f4 đa dạng)
+OBJECTIVE_IS_MAX = (True, False, True, True)
 
 
 def evaluate_route(
@@ -136,16 +124,16 @@ def evaluate_route(
     k_total: float,
 ) -> Tuple[float, float, float, float]:
     visited = route_indices[1:]
-    f1 = sum(points_data[i].get("score") or 0 for i in visited)          # maximize
+    f1 = sum(points_data[i].get("score") or 0 for i in visited)
     f2 = 0.0
     for i in range(len(route_indices) - 1):
         p1 = points_data[route_indices[i]]
         p2 = points_data[route_indices[i + 1]]
-        f2 += _travel_minutes(p1, p2, matrix_dict, k_total)               # minimize
-    f3 = float(len(visited))                                              # maximize
+        f2 += _travel_minutes(p1, p2, matrix_dict, k_total)
+    f3 = float(len(visited))
     if visited:
         loai_hinh_set = {points_data[i]["loai_hinh"] for i in visited}
-        f4 = len(loai_hinh_set) / len(visited)                            # maximize
+        f4 = len(loai_hinh_set) / len(visited)
     else:
         f4 = 0.0
     return (f1, f2, f3, f4)
@@ -176,9 +164,9 @@ class Individual:
 
 @dataclass
 class NSGA2Context:
-    points_data: List[dict]          # points_data[0] = origin
+    points_data: List[dict]
     matrix_dict: dict
-    k_total: float                   # = k_weather * k_restriction
+    k_total: float
     k_density: float
     clock_start: datetime
     clock_end: datetime
@@ -316,11 +304,6 @@ def mutate(route: List[int], n_points: int) -> List[int]:
 
 
 def _greedy_seed_routes(points_data: List[dict], ctx: NSGA2Context, n_seeds: int) -> List[List[int]]:
-    """
-    Seeding đơn giản kiểu nearest-neighbor (dùng khoảng cách Euclid, cùng ý
-    tưởng calc_dist() trong main.py) để tăng tốc hội tụ ban đầu — KHÔNG thay
-    thế cho greedy 2-opt của main.py, chỉ giúp NSGA-II xuất phát tốt hơn.
-    """
     seeds = []
     n_points = len(points_data)
     for _ in range(n_seeds):
@@ -328,7 +311,6 @@ def _greedy_seed_routes(points_data: List[dict], ctx: NSGA2Context, n_seeds: int
         random.shuffle(remaining)
         cur = 0
         route = [0]
-        # nearest-neighbor trên một tập con ngẫu nhiên để đa dạng seed
         k = random.randint(3, max(3, min(len(remaining), n_points - 1)))
         pool = remaining[:k]
         while pool:
@@ -415,29 +397,7 @@ def run_nsga2(ctx: NSGA2Context, config: NSGA2Config) -> List[Individual]:
 
 
 # =====================================================================
-# 4. HYPERVOLUME 2D (mục V — chỉ số so sánh định lượng)
-# =====================================================================
-
-def hypervolume_2d(front: List[Individual], obj_idx=(0, 1)) -> float:
-    if not front:
-        return 0.0
-    pts = [(ind.minimized[obj_idx[0]], ind.minimized[obj_idx[1]]) for ind in front]
-    ref_x = max(p[0] for p in pts) * 1.1 + 1e-6
-    ref_y = max(p[1] for p in pts) * 1.1 + 1e-6
-    pts.sort(key=lambda p: p[0])
-    hv, prev_x, min_y = 0.0, pts[0][0], ref_y
-    for x, y in pts:
-        if y < min_y:
-            if x > prev_x:
-                hv += (x - prev_x) * (min_y - y)
-            min_y = y
-            prev_x = x
-    return hv
-
-
-# =====================================================================
-# 5. XÂY DỰNG OUTPUT ROUTE — CÙNG FORMAT với finalize_route() trong main.py
-#    để frontend (route_selector trong index.html) dùng lại được ngay.
+# 5. XÂY DỰNG OUTPUT ROUTE
 # =====================================================================
 
 def build_route_output(
@@ -509,9 +469,6 @@ def build_route_output(
 
 # =====================================================================
 # 6. ENDPOINT MỚI: /api/optimize-route-nsga2
-#    Bám sát luồng xử lý của /api/optimize-route trong main.py (parse ngày
-#    giờ, fetch DB, chọn điểm xuất phát) — chỉ thay khối sinh lộ trình
-#    (greedy + 2-opt) bằng NSGA-II.
 # =====================================================================
 
 @app.post("/api/optimize-route-nsga2")
@@ -541,9 +498,18 @@ async def optimize_route_nsga2(request: OptimizationRequest):
     except Exception:
         return {"status": "error", "message": "Lỗi định dạng thời gian"}
 
-    # 3. Lấy địa điểm từ DB (giống hệt main.py)
-    conn = get_db_connection()
+    # ================= ĐÃ SỬA LỖI DB TẠI ĐÂY =================
+    # 3. Lấy địa điểm từ DB (Quét tìm đúng object connection)
+    db_obj = get_db_connection()
+    if isinstance(db_obj, tuple):
+        # Lấy phần tử nào có chứa lệnh 'cursor' làm connection
+        conn = db_obj[0] if hasattr(db_obj[0], 'cursor') else db_obj[1]
+    else:
+        conn = db_obj
+        
     cursor = conn.cursor()
+    # ====
+
     cursor.execute("""
         SELECT d.id, d.ten, d.vi_do, d.kinh_do, d.thoi_gian_tham_quan_phut, d.diem_gia_tri, d.loai_hinh,
                c.gio_mo_cua, c.gio_dong_cua
@@ -555,25 +521,47 @@ async def optimize_route_nsga2(request: OptimizationRequest):
     default_open = datetime.strptime("00:00", "%H:%M").time()
     default_close = datetime.strptime("23:59", "%H:%M").time()
 
-    for r in cursor.fetchall():
-        open_time = r.gio_mo_cua if r.gio_mo_cua else default_open
-        close_time = r.gio_dong_cua if r.gio_dong_cua else default_close
+    # ================= ĐÃ SỬA LỖI ĐỌC CỘT SQL TẠI ĐÂY =================
+    rows = cursor.fetchall()
+    
+    for r in rows:
+        # Truy cập bằng index dựa theo thứ tự SELECT:
+        # 0:id, 1:ten, 2:vi_do, 3:kinh_do, 4:thoi_gian_tham_quan_phut
+        # 5:diem_gia_tri, 6:loai_hinh, 7:gio_mo_cua, 8:gio_dong_cua
+        row_tuple = tuple(r) 
+        
+        # Xử lý an toàn nếu index bị out of range hoặc giá trị là None
+        raw_open = row_tuple[7] if len(row_tuple) > 7 and row_tuple[7] else None
+        raw_close = row_tuple[8] if len(row_tuple) > 8 and row_tuple[8] else None
+
+        open_time = raw_open if raw_open else default_open
+        close_time = raw_close if raw_close else default_close
+        
         if isinstance(open_time, str):
             open_time = datetime.strptime(open_time[:5], "%H:%M").time()
         if isinstance(close_time, str):
             close_time = datetime.strptime(close_time[:5], "%H:%M").time()
 
         all_points.append({
-            "id": str(r.id), "ten": r.ten, "lat": r.vi_do, "lon": r.kinh_do,
-            "time": r.thoi_gian_tham_quan_phut, "score": r.diem_gia_tri, "loai_hinh": r.loai_hinh,
-            "open_time": open_time, "close_time": close_time,
+            "id": str(row_tuple[0]), 
+            "ten": row_tuple[1], 
+            "lat": float(row_tuple[2] or 0), 
+            "lon": float(row_tuple[3] or 0),
+            "time": float(row_tuple[4] or 0), 
+            "score": float(row_tuple[5] or 0), 
+            "loai_hinh": row_tuple[6],
+            "open_time": open_time, 
+            "close_time": close_time,
         })
-    conn.close()
+    # ============================================================
+    
+    if hasattr(conn, "close"):
+        conn.close()
 
-    # 4. Ma trận OSRM (dùng chung hàm với main.py)
+    # 4. Ma trận OSRM
     global_matrix = get_global_osrm_matrix(all_points, vehicle_type=request.vehicle_type)
 
-    # 5. Chọn điểm xuất phát (CÙNG logic 3 trường hợp như main.py)
+    # 5. Chọn điểm xuất phát
     all_points.sort(key=lambda x: x["score"], reverse=True)
 
     if request.start_lat is not None and request.start_lon is not None:
@@ -619,7 +607,6 @@ async def optimize_route_nsga2(request: OptimizationRequest):
         )
 
         pareto_front = run_nsga2(ctx, config)
-        # sắp theo f1 (điểm giá trị) giảm dần để đánh số route dễ đọc
         pareto_front.sort(key=lambda ind: -ind.raw[0])
 
         for rank_i, ind in enumerate(pareto_front):
