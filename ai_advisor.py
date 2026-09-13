@@ -79,18 +79,21 @@ def build_rag_context(points: list) -> str:
 # Ollama dùng constrained decoding nên model KHÔNG THỂ trả ra thứ không phải
 # JSON hợp lệ, giảm hẳn lỗi parse.
 
-PROMPT_TEMPLATE = """Bạn là trợ lý tư vấn du lịch Hà Nội, nói chuyện tự nhiên, thân thiện.
+PROMPT_TEMPLATE = """Bạn là một chuyên gia thiết kế tour du lịch Hà Nội tâm huyết và giàu cảm xúc.
 
-Danh sách địa điểm khả dụng (chỉ được chọn ID trong danh sách này, KHÔNG được bịa ID mới):
+Danh sách địa điểm khả dụng (chỉ được chọn ID trong danh sách này, KHÔNG bịa ID mới):
 {context}
 
 Yêu cầu của người dùng: "{user_preference}"
 
-Hãy trả lời bằng một object JSON DUY NHẤT theo đúng schema sau, không thêm chữ nào khác
-ngoài object JSON:
+Nhiệm vụ:
+1. Đọc kỹ khoảng thời gian người dùng có. Hãy ước lượng và trả về mảng "ids" chứa số lượng địa điểm phù hợp (Ví dụ: 2-3 tiếng thì đề xuất 2-3 điểm, nửa ngày đề xuất 4-5 điểm, 12 tiếng thì đề xuất 7-10 điểm). Hãy chọn dư ra 1-2 điểm cũng được, vì thuật toán hệ thống sẽ tính toán kẹt xe thực tế và cắt gọt lại sau.
+2. Trả về "advice_text": Đoạn văn tư vấn cực kỳ tự nhiên, xưng "mình" gọi "bạn". Dựa vào yêu cầu, hãy mô tả chi tiết CẢM GIÁC, KHÔNG KHÍ mà họ sẽ trải nghiệm. Nếu lịch trình dài, hãy gợi ý nhẹ nhàng việc nghỉ ngơi hoặc ăn uống. Tránh liệt kê khô khan rập khuôn.
+
+Trả về một object JSON DUY NHẤT theo schema sau:
 {{
-  "advice_text": "đoạn văn tự nhiên giải thích vì sao bạn chọn các địa điểm này, giọng văn tư vấn viên chứ không phải máy tính liệt kê",
-  "ids": ["id1", "id2", "id3"]
+  "advice_text": "đoạn văn tư vấn đầy cảm xúc (Tuyệt đối KHÔNG viết các ký tự như [id2], [id3] vào trong đoạn văn này)...",
+  "ids": ["1", "5", "12", "18"]
 }}
 """
 
@@ -117,7 +120,7 @@ def call_ollama(prompt: str, model: str = OLLAMA_MODEL) -> str:
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
-              #  "format": "json",       # ép Ollama chỉ sinh JSON hợp lệ
+                "format": "json",       # ép Ollama chỉ sinh JSON hợp lệ
                 "options": {"temperature": 0.3},   # giảm temperature để bớt "sáng tạo" ra ID lạ
             },
             timeout=OLLAMA_TIMEOUT_SECONDS,
@@ -196,7 +199,7 @@ def ai_suggest(req: AISuggestRequest):
     # ai_advisor được import ngược lại từ main.py.
     from main import fetch_all_points
 
-    all_points = fetch_all_points(vehicle_type=req.vehicle_type)[:5]
+    all_points = fetch_all_points(vehicle_type=req.vehicle_type)
     if not all_points:
         raise HTTPException(status_code=404, detail="Không có địa điểm nào khả dụng cho phương tiện này.")
 

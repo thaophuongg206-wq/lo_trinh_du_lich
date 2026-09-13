@@ -1,6 +1,17 @@
+USE master;
+GO
+IF DB_ID('DuLichThongMinh') IS NOT NULL
+BEGIN
+    ALTER DATABASE DuLichThongMinh SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE DuLichThongMinh;
+END
+GO
+
 
 CREATE DATABASE DuLichThongMinh;
+Go
 USE DuLichThongMinh;
+Go
 
 CREATE TABLE NGUOI_DUNG (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -21,7 +32,8 @@ CREATE TABLE DIA_DIEM (
     thong_tin_chi_tiet NVARCHAR(MAX),
     review NVARCHAR(MAX),
     phu_hop NVARCHAR(255),
-    cap_do_tiep_can INT DEFAULT 3
+    cap_do_tiep_can INT DEFAULT 3,
+    url_hinh_anh NVARCHAR(MAX)
 );
 CREATE TABLE CUA_SO_THOI_GIAN (
     id INT IDENTITY(1,1) PRIMARY KEY,
