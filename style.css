@@ -1,104 +1,64 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;1,600&family=Roboto:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
-html, body {
-    height: 100vh;
-    background-color: #f7f5f0; /* Tone màu giấy cũ */
-    font-family: 'Roboto', sans-serif;
-    overflow: hidden;
+body, html {
+    height: 100%; margin: 0;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background-color: #F8F9FA; color: #2D3748;
 }
 
-.brand-title {
-    font-family: 'Playfair Display', serif;
-    color: #4a3b32;
-    font-weight: 600;
+/* HERO SECTION (Trung tâm) */
+#hero-section {
+    min-height: 100vh; display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    background: url('https://images.unsplash.com/photo-1599708153386-62bf231454ef?auto=format&fit=crop&w=1920&q=80') no-repeat center center/cover;
+    position: relative; z-index: 1;
+}
+#hero-section::before {
+    content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(8px); z-index: -1;
+}
+.search-box {
+    background: white; border-radius: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.1);
+    padding: 40px; width: 100%; max-width: 850px;
 }
 
-.sidebar {
-    background-color: #fdfbf7;
-    border-right: 1px solid #e5e0d8;
-    z-index: 10;
+/* CHATBOT SECTION */
+#chat-section { display: none; min-height: 100vh; background: #F8F9FA; padding: 50px 20px; }
+.ai-message {
+    background: white; border-radius: 20px; padding: 30px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.05); font-size: 1.15rem; line-height: 1.8;
+}
+.place-card {
+    border-radius: 16px; overflow: hidden; background: white;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.05); transition: transform 0.2s;
+    height: 100%; border: 1px solid #edf2f7; position: relative;
+}
+.place-card:hover { transform: translateY(-8px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); }
+.place-card img { height: 200px; width: 100%; object-fit: cover; }
+.rating-badge {
+    position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.95);
+    padding: 5px 10px; border-radius: 12px; font-weight: 700; color: #d87c4f; font-size: 0.9rem;
 }
 
-.bg-custom {
-    background-color: #5c4d42 !important; /* Nâu trầm */
+/* MAP SECTION */
+#map-section { display: none; height: 100vh; width: 100vw; position: relative; }
+#map { height: 100%; width: 100%; }
+.route-sidebar {
+    position: absolute; top: 20px; left: 20px; width: 400px; max-height: calc(100vh - 40px);
+    background: white; border-radius: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+    z-index: 1000; overflow-y: auto; padding: 25px;
 }
-
-.btn-vintage {
-    background-color: #d87c4f; /* Cam cháy Kodak */
-    border: none;
-    color: white;
-    transition: all 0.3s ease;
-}
-
-.btn-vintage:hover {
-    background-color: #bf663c;
-    color: white;
-    transform: translateY(-2px);
-}
-
-.location-list-scroll {
-    max-height: 45vh;
-    overflow-y: auto;
-}
-
-/* Tùy chỉnh Scrollbar */
-.location-list-scroll::-webkit-scrollbar { width: 6px; }
-.location-list-scroll::-webkit-scrollbar-thumb { background: #d0c8b8; border-radius: 4px; }
-
-.form-check-input:checked {
-    background-color: #d87c4f;
-    border-color: #d87c4f;
-}
-
-/* Card Kết quả bay lơ lửng trên bản đồ */
-.result-card {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    width: 350px;
-    max-height: 85vh;
-    overflow-y: auto;
-    z-index: 1000;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(5px);
-    border: none;
-}
-
-/* Giao diện Timeline */
-.timeline-ui {
-    list-style: none;
-    padding-left: 15px;
-    border-left: 2px solid #d87c4f;
-    margin: 0;
-}
-
-.timeline-ui li {
-    position: relative;
-    padding-bottom: 15px;
-    padding-left: 15px;
-}
-
+.timeline-ui { list-style: none; padding-left: 20px; border-left: 2px solid #edf2f7; margin: 0; }
+.timeline-ui li { position: relative; padding-bottom: 25px; padding-left: 20px; }
 .timeline-ui li::before {
-    content: "";
-    position: absolute;
-    left: -21px;
-    top: 0;
-    width: 10px;
-    height: 10px;
-    background-color: #d87c4f;
-    border-radius: 50%;
-    border: 2px solid white;
-    box-shadow: 0 0 0 2px #d87c4f;
+    content: ""; position: absolute; left: -27px; top: 0; width: 14px; height: 14px;
+    background-color: #d87c4f; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 2px #d87c4f;
 }
 
-.timeline-ui li:last-child { border: 0; padding-bottom: 0; }
-/* Hiệu ứng nổi Card khi hover */
-.emotion-card:hover {
-    transform: translateY(-8px);
-    box-shadow: 0 1rem 3rem rgba(0,0,0,0.15) !important;
+/* ADMIN BUTTON (Giấu ở góc) */
+.admin-trigger {
+    position: fixed; bottom: 20px; right: 20px; width: 40px; height: 40px;
+    background: #e2e8f0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: #a0aec0; opacity: 0.3; cursor: pointer; transition: 0.3s; z-index: 9999;
 }
-
-/* Tùy chỉnh lớp phủ màn hình chọn lộ trình */
-#emotion-cards-overlay {
-    background: linear-gradient(135deg, #fdfbf7 0%, #f7f5f0 100%) !important;
-}
+.admin-trigger:hover { opacity: 1; background: #2d3748; color: white; }

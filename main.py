@@ -138,9 +138,14 @@ def get_locations():
     try:
         conn, db_type = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh FROM DIA_DIEM")
+        # Đã lấy thêm url_hinh_anh và diem_gia_tri để Frontend hiển thị
+        cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, url_hinh_anh, review FROM DIA_DIEM")
         rows = fetch_all_dict(cursor, db_type)
-        locations = [{"id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], "loai_hinh": r["loai_hinh"]} for r in rows]
+        locations = [{
+            "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], 
+            "loai_hinh": r["loai_hinh"], "rating": r["diem_gia_tri"], 
+            "url_hinh_anh": r["url_hinh_anh"], "review": r["review"]
+        } for r in rows]
         conn.close()
         return {"status": "success", "data": locations, "db_engine": db_type}
     except Exception as e:
@@ -1035,34 +1040,17 @@ async def optimize_route(request: OptimizationRequest):
     # giờ giấc cho đúng tập điểm AI đã chọn. Đây chính là yêu cầu "đôi chân thuật
     # toán vẫn phải sắp xếp lại để đi không bị vòng vèo, tính đúng giờ kẹt xe".
     # ============================================================
+    # ============================================================
+    # NHÁNH AI-SELECTED (Task 2.3)
+    # ============================================================
     if request.ai_selected_ids:
         id_to_point = {p["id"]: p for p in all_points}
         ai_points = [id_to_point[i] for i in request.ai_selected_ids if i in id_to_point]
-        invalid_ids = [i for i in request.ai_selected_ids if i not in id_to_point]
-        if invalid_ids:
-            # Không âm thầm bỏ qua — để Frontend/log biết AI đã đề xuất ID không hợp lệ
-            # (đã lọc ở /api/ai-suggest rồi, nhưng phòng trường hợp gọi thẳng endpoint này).
-            pass
         if not ai_points:
-            return {"status": "error", "message": "Không có ID điểm đến hợp lệ nào trong ai_selected_ids."}
-
-        origin = starting_points[0]
-        selected_points = [origin] + [p for p in ai_points if p["id"] != origin["id"]]
-        k_weather = get_weather_factor(origin["lat"], origin["lon"])
-        result = finalize_route(selected_points, k_weather, "🤖 AI đề xuất", 1)
-        if not result:
-            return {"status": "error", "message": "AI đã chọn điểm nhưng không sắp xếp được lịch trình hợp lệ trong khung giờ đã cho (có thể do giờ đóng cửa hoặc quỹ thời gian quá ngắn)."}
-        result["route_id"] = 1
-        return {
-            "status": "success",
-            "available_minutes": available_minutes,
-            "trip_date": str(base_date),
-            "vehicle_type": request.vehicle_type,
-            "vehicle_note": vehicle_note,
-            "accessible_locations_count": len(all_points),
-            "invalid_ai_ids": invalid_ids,
-            "routes": [result]
-        }
+            return {"status": "error", "message": "Không có ID điểm đến hợp lệ nào."}
+        
+        # Ghi đè danh sách điểm bằng lựa chọn của AI để thuật toán bên dưới tự sinh 3-5 lộ trình
+        all_points = starting_points + [p for p in ai_points if p["id"] != starting_points[0]["id"]]
 
     # BUG 5 FIX (tiếp): trước đây hệ thống phải "thử lại" toàn bộ route generation
     # với k_density=1.0 nếu không sinh được route nào, vì hệ số congestion tĩnh có
@@ -1098,56 +1086,47 @@ async def optimize_route(request: OptimizationRequest):
 @app.post("/api/admin/import-excel")
 async def import_excel_tool(file: UploadFile = File(...)):
     try:
-        # Đọc dữ liệu từ file upload
         contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents)).replace({np.nan: None})
+        # 1. Hỗ trợ đọc file CSV (từ tool cào) và Excel
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(io.BytesIO(contents), encoding='utf-8-sig').replace({np.nan: None})
+        else:
+            df = pd.read_excel(io.BytesIO(contents)).replace({np.nan: None})
         
-        # Kết nối SQLite (dulich.db)
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
-        conn = sqlite3.connect(db_path)
+        # 2. Kết nối tự động vào đúng SQL Server
+        conn, db_type = get_db_connection()
         cursor = conn.cursor()
         
-        inserted_count = 0
         updated_count = 0
-        
         for index, row in df.iterrows():
-            ten = str(row.get('ten', '')).strip()
+            # Lấy tên địa điểm (Hỗ trợ cả header 'ten_dia_diem' hoặc 'ten')
+            ten = str(row.get('ten_dia_diem', row.get('ten', ''))).strip()
             if not ten or ten == 'None':
                 continue
-                
-            vi_do = row.get('vi_do')
-            kinh_do = row.get('kinh_do')
-            loai_hinh = row.get('loai_hinh')
-            diem_gia_tri = row.get('diem_gia_tri')
-            thoi_gian_tham_quan_phut = row.get('thoi_gian_tham_quan_phut')
-            url_hinh_anh = row.get('url_hinh_anh')
             
-            # Kiểm tra địa điểm đã có chưa
+            # Chỉ lấy link ảnh đầu tiên nếu có nhiều ảnh
+            anh_raw = row.get('anh', row.get('url_hinh_anh'))
+            url_hinh_anh = str(anh_raw).split(" ||| ")[0] if anh_raw and str(anh_raw) not in ['None', 'nan', ''] else None
+            
+            diem_gia_tri = row.get('rating', row.get('diem_gia_tri'))
+            diem_gia_tri = diem_gia_tri if not pd.isna(diem_gia_tri) and str(diem_gia_tri) != 'None' else None
+
+            # Cập nhật vào DB
             cursor.execute("SELECT id FROM DIA_DIEM WHERE ten = ?", (ten,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                # Nếu có -> UPDATE
+            if cursor.fetchone() and url_hinh_anh:
                 cursor.execute("""
                     UPDATE DIA_DIEM 
-                    SET vi_do=?, kinh_do=?, loai_hinh=?, diem_gia_tri=?, thoi_gian_tham_quan_phut=?, url_hinh_anh=?
+                    SET url_hinh_anh=?, diem_gia_tri=ISNULL(?, diem_gia_tri)
                     WHERE ten=?
-                """, (vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh, ten))
+                """, (url_hinh_anh, diem_gia_tri, ten))
                 updated_count += 1
-            else:
-                # Nếu chưa có -> INSERT
-                cursor.execute("""
-                    INSERT INTO DIA_DIEM (ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh, cap_do_tiep_can)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 3)
-                """, (ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, thoi_gian_tham_quan_phut, url_hinh_anh))
-                inserted_count += 1
                 
         conn.commit()
         conn.close()
-        
-        return {
-            "status": "success", 
-            "message": f"Hoàn tất! Đã thêm mới {inserted_count} và cập nhật {updated_count} địa điểm."
-        }
+        return {"status": "success", "message": f"Hoàn tất! Đã cập nhật ảnh và rating cho {updated_count} địa điểm."}
     except Exception as e:
         return {"status": "error", "message": f"Lỗi đọc file: {str(e)}"}
+
+# Nhúng API của AI Advisor vào hệ thống chính   
+from ai_advisor import router as ai_router
+app.include_router(ai_router)
