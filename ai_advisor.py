@@ -9,8 +9,9 @@ from pydantic import BaseModel
 router = APIRouter()
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2"
-OLLAMA_TIMEOUT = 120
+OLLAMA_MODEL = "llama3.2:1b"       # Model 1B sieu nhe, toi uu rieng cho may tinh chay CPU
+OLLAMA_TIMEOUT = 180
+OLLAMA_TIMEOUT_SECONDS = 180
 
 
 class AISuggestRequest(BaseModel):
@@ -33,12 +34,10 @@ def build_context_string(points: list) -> str:
     lines = []
     for p in points:
         desc = (p.get("thong_tin_chi_tiet") or p.get("mo_ta") or "").strip()
-        if len(desc) > 120:
-            desc = desc[:120] + "..."
-            
+        if len(desc) > 80:
+            desc = desc[:80] + "..."
         lines.append(
-            f"- id={p['id']} | {p['ten']} | loại: {p.get('loai_hinh','?')} | "
-            f"mở cửa: {p['open_time']}-{p['close_time']} | mô tả: {desc}"
+            f"- id={p['id']} | {p['ten']} | loại: {p.get('loai_hinh','?')} | mô tả: {desc}"
         )
     return "\n".join(lines)
 
