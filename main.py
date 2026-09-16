@@ -615,17 +615,17 @@ def fetch_all_points(vehicle_type: str = None):
         if isinstance(close_time, str): close_time = datetime.strptime(close_time[:5], "%H:%M").time()
 
         point_data = {
-    "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"],
-    "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
-    "open_time": open_time, "close_time": close_time,
-    "mo_ta": r["mo_ta"] or "",
-    "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
-    "review": r["review"] or "",
-    "phu_hop": r["phu_hop"] or "",
-    "url_hinh_anh": r["url_hinh_anh"] or "",
-    "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
-}
-    all_points.append(point_data)
+            "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"],
+            "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
+            "open_time": open_time, "close_time": close_time,
+            "mo_ta": r["mo_ta"] or "",
+            "thong_tin_chi_tiet": r["thong_tin_chi_tiet"] or "",
+            "review": r["review"] or "",
+            "phu_hop": r["phu_hop"] or "",
+            "url_hinh_anh": r["url_hinh_anh"] or "",
+            "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
+        }
+        all_points.append(point_data)
 
     if vehicle_type:
         max_access = VEHICLE_ACCESS_LEVEL.get(vehicle_type, 3)
@@ -874,16 +874,19 @@ async def optimize_route(request: OptimizationRequest):
             "optimized_route": final_route_details
         }
 
-    def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn):
+    def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn,
+                                   must_visit_ids=None):
         """
         Greedy builder với scorer tùy chỉnh.
         score_fn(last_point, candidate, dist_km) -> float  (nhỏ hơn = ưu tiên hơn)
         end_clock: thời điểm kết thúc tối đa (clock_end hoặc fake ngắn hơn).
+        must_visit_ids: tập ID điểm bắt buộc ghé (từ AI), được ưu tiên tuyệt đối.
 
         travel_time dùng get_travel_minutes() (tính động theo thời điểm khởi hành
         thực tế của từng chặng — BUG 5 fix). visit_time KHÔNG nhân hệ số traffic
         (BUG 2 fix).
         """
+        must_visit_ids = must_visit_ids or set()
         origin_open  = datetime.combine(base_date, origin["open_time"])
         origin_close = datetime.combine(base_date, origin["close_time"])
         current_clock = max(clock_start, origin_open)
@@ -907,6 +910,9 @@ async def optimize_route(request: OptimizationRequest):
                 nd         = sv + timedelta(minutes=est_visit)
                 if nd <= p_close and nd <= end_clock:
                     sc = score_fn(selected[-1], p, dist)
+                    # Ưu tiên tuyệt đối: must-visit luôn được chọn trước
+                    if p["id"] in must_visit_ids:
+                        sc = -99999 + sc * 0.001
                     if sc < best_score:
                         best_score = sc
                         best_next  = p
@@ -938,7 +944,12 @@ async def optimize_route(request: OptimizationRequest):
             r = finalize_route(pts, k_weather, label, route_index)
             if not r:
                 return
-            fp = frozenset(p["id"] for p in r["optimized_route"])
+            # Fingerprint gồm thứ tự ghé thăm + chiến lược → cho phép cùng tập điểm
+            # nhưng khác thứ tự hoặc khác chiến lược được giữ lại (đa mục tiêu).
+            fp = (
+                tuple(p["id"] for p in r["optimized_route"]),
+                label
+            )
             if fp not in seen_fingerprints:
                 seen_fingerprints.add(fp)
                 r["route_id"] = len(generated) + 1
@@ -946,12 +957,6 @@ async def optimize_route(request: OptimizationRequest):
 
         w_exp = request.weight / 100.0
         w_time = 1.0 - w_exp
-
-        scorers = [
-            (lambda last, p, travel: (travel * w_time) - ((p.get("score",0) + p.get("pref_match",0)*2) * 5 * w_exp), "⚖️ Cân bằng"),
-            (lambda last, p, travel: (travel * w_time) + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0) - ((p.get("score",0) + p.get("pref_match",0)*2) * 5 * w_exp), "🌈 Đa dạng"),
-            (lambda last, p, travel: travel - (p.get("pref_match",0) * 15 * w_exp), "🎯 Đúng gu trải nghiệm")
-        ]
 
         for origin in starting_points:
             k_weather      = get_weather_factor(origin["lat"], origin["lon"])
@@ -994,7 +999,8 @@ async def optimize_route(request: OptimizationRequest):
                 for score_fn, strat_name in scorers:
                     label = f"{strat_name} · {time_label}"
                     try_add(
-                        build_route_greedy_custom(origin, base_unvisited, k_weather, end_t, score_fn),
+                        build_route_greedy_custom(origin, base_unvisited, k_weather, end_t, score_fn,
+                                                  must_visit_ids=ai_must_visit_ids),
                         k_weather, label
                     )
 
@@ -1003,16 +1009,19 @@ async def optimize_route(request: OptimizationRequest):
                     near_n = max(8, len(base_unvisited) // 3)
                     val_n  = max(8, len(base_unvisited) // 3)
                     try_add(build_route_greedy_custom(origin, pool_value[:val_n], k_weather, end_t,
-                                                       lambda last, p, d: d), k_weather, f"🏆 Top điểm · {time_label}")
+                                                       lambda last, p, d: d,
+                                                       must_visit_ids=ai_must_visit_ids), k_weather, f"🏆 Top điểm · {time_label}")
                     try_add(build_route_greedy_custom(origin, pool_near[:near_n], k_weather, end_t,
-                                                       lambda last, p, d: -(p.get("score") or 0)), k_weather, f"🗺️ Lân cận · {time_label}")
+                                                       lambda last, p, d: -(p.get("score") or 0),
+                                                       must_visit_ids=ai_must_visit_ids), k_weather, f"🗺️ Lân cận · {time_label}")
 
             # ── Loại trừ điểm top → lộ trình thực sự khác biệt ──
             for skip in range(min(5, len(pool_value))):
                 pool_excl = [p for p in base_unvisited if p["id"] != pool_value[skip]["id"]]
                 try_add(
                     build_route_greedy_custom(origin, pool_excl, k_weather, clock_end,
-                                              lambda last, p, d: d / ((p.get("score") or 1) + 1)),
+                                              lambda last, p, d: d / ((p.get("score") or 1) + 1),
+                                              must_visit_ids=ai_must_visit_ids),
                     k_weather, f"🔀 Thay thế #{skip+1}"
                 )
 
@@ -1025,7 +1034,8 @@ async def optimize_route(request: OptimizationRequest):
                 sample = rng.sample(base_unvisited, n)
                 try_add(
                     build_route_greedy_custom(origin, sample, k_weather, clock_end,
-                                              lambda last, p, d: d / ((p.get("score") or 1) + 1)),
+                                              lambda last, p, d: d / ((p.get("score") or 1) + 1),
+                                              must_visit_ids=ai_must_visit_ids),
                     k_weather, f"🎲 Khám phá #{seed}"
                 )
 
@@ -1041,16 +1051,20 @@ async def optimize_route(request: OptimizationRequest):
     # toán vẫn phải sắp xếp lại để đi không bị vòng vèo, tính đúng giờ kẹt xe".
     # ============================================================
     # ============================================================
-    # NHÁNH AI-SELECTED (Task 2.3)
+    # NHÁNH AI-SELECTED (Task 2.3) — FILL-UP LOGIC
+    # Giữ nguyên toàn bộ all_points từ DB để Greedy có thể bổ sung
+    # điểm lân cận Rating cao lấp đầy quỹ thời gian trống.
+    # Các điểm AI chọn được đánh dấu must-visit (ưu tiên tuyệt đối).
     # ============================================================
+    ai_must_visit_ids = set()
     if request.ai_selected_ids:
         id_to_point = {p["id"]: p for p in all_points}
         ai_points = [id_to_point[i] for i in request.ai_selected_ids if i in id_to_point]
         if not ai_points:
             return {"status": "error", "message": "Không có ID điểm đến hợp lệ nào."}
-        
-        # Ghi đè danh sách điểm bằng lựa chọn của AI để thuật toán bên dưới tự sinh 3-5 lộ trình
-        all_points = starting_points + [p for p in ai_points if p["id"] != starting_points[0]["id"]]
+        ai_must_visit_ids = {p["id"] for p in ai_points}
+        # KHÔNG ghi đè all_points — giữ nguyên toàn bộ tập điểm từ DB
+        # để thuật toán Greedy có thể fill-up thêm điểm lân cận Rating cao
 
     # BUG 5 FIX (tiếp): trước đây hệ thống phải "thử lại" toàn bộ route generation
     # với k_density=1.0 nếu không sinh được route nào, vì hệ số congestion tĩnh có
@@ -1065,6 +1079,8 @@ async def optimize_route(request: OptimizationRequest):
     # Sắp xếp lộ trình: nhiều điểm tham quan hơn trước, rồi thời gian ngắn hơn, rồi
     # (tie-breaker) route phù hợp sở thích người dùng hơn được ưu tiên hiển thị trước.
     generated_routes.sort(key=lambda r: (-len(r["optimized_route"]), r["total_time_minutes"], -r.get("avg_preference_score", 0.5)))
+    # Giới hạn tối đa 5 lộ trình đa dạng nhất trả về cho Frontend
+    generated_routes = generated_routes[:5]
     for i, r in enumerate(generated_routes):
         r["route_id"] = i + 1
         # Tên fallback "Lộ trình N" phải khớp route_id cuối cùng sau khi sắp xếp lại.
