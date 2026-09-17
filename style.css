@@ -12,6 +12,7 @@ body, html {
     justify-content: center; align-items: center;
     background: url('https://images.unsplash.com/photo-1599708153386-62bf231454ef?auto=format&fit=crop&w=1920&q=80') no-repeat center center/cover;
     position: relative; z-index: 1;
+    padding: 24px 16px;
 }
 #hero-section::before {
     content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -22,23 +23,53 @@ body, html {
     padding: 40px; width: 100%; max-width: 850px;
 }
 
+/* Responsive: trên tablet/mobile các field co lại và tự xuống hàng thay vì
+   bị khoá cứng ở col-md-2/col-md-4, tránh cắt chữ/số hoặc vỡ layout. */
+@media (max-width: 991.98px) {
+    .search-box { padding: 28px 20px; }
+}
+@media (max-width: 575.98px) {
+    .hero-fields .form-control,
+    .hero-fields .form-select { font-size: 0.92rem; }
+    .search-box { border-radius: 18px; }
+}
+
 /* CHATBOT SECTION */
 #chat-section { display: none; min-height: 100vh; background: #F8F9FA; padding: 50px 20px; }
 .ai-message {
     background: white; border-radius: 20px; padding: 30px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.05); font-size: 1.15rem; line-height: 1.8;
 }
+
+/* Danh sách điểm gợi ý: carousel cuộn ngang thay vì grid dọc dài */
+.place-carousel {
+    display: flex; gap: 18px; overflow-x: auto; padding: 6px 4px 14px;
+    scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+}
+.place-carousel::-webkit-scrollbar { height: 8px; }
+.place-carousel::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 8px; }
+
 .place-card {
     border-radius: 16px; overflow: hidden; background: white;
     box-shadow: 0 5px 15px rgba(0,0,0,0.05); transition: transform 0.2s;
-    height: 100%; border: 1px solid #edf2f7; position: relative;
+    border: 1px solid #edf2f7; position: relative;
+    flex: 0 0 240px; scroll-snap-align: start;
 }
 .place-card:hover { transform: translateY(-8px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); }
-.place-card img { height: 200px; width: 100%; object-fit: cover; }
+.place-card img { height: 160px; width: 100%; object-fit: cover; }
 .rating-badge {
     position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.95);
     padding: 5px 10px; border-radius: 12px; font-weight: 700; color: #d87c4f; font-size: 0.9rem;
 }
+
+/* Chip gợi ý tiếp nối ("+ Thêm quán ăn trưa", "+ Bớt một điểm"...) */
+.quick-action-chip {
+    background: white; border: 1px solid #e2e8f0; border-radius: 999px;
+    padding: 8px 16px; font-size: 0.9rem; font-weight: 600; color: #2D3748;
+    cursor: pointer; transition: 0.2s;
+}
+.quick-action-chip:hover { background: #2D3748; color: white; border-color: #2D3748; }
+.quick-action-chip:disabled { opacity: 0.6; cursor: wait; }
 
 /* MAP SECTION */
 #map-section { display: none; height: 100vh; width: 100vw; position: relative; }
@@ -48,17 +79,56 @@ body, html {
     background: white; border-radius: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.2);
     z-index: 1000; overflow-y: auto; padding: 25px;
 }
+@media (max-width: 575.98px) {
+    .route-sidebar { width: calc(100vw - 24px); left: 12px; top: 12px; padding: 18px; max-height: 45vh; }
+}
 .timeline-ui { list-style: none; padding-left: 20px; border-left: 2px solid #edf2f7; margin: 0; }
 .timeline-ui li { position: relative; padding-bottom: 25px; padding-left: 20px; }
 .timeline-ui li::before {
     content: ""; position: absolute; left: -27px; top: 0; width: 14px; height: 14px;
     background-color: #d87c4f; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 2px #d87c4f;
 }
+.timeline-review {
+    margin-top: 6px; padding: 8px 10px; background: #FFF8F0; border-radius: 10px;
+    font-size: 0.85rem; color: #8a5a34; font-style: italic;
+}
 
-/* ADMIN BUTTON (Giấu ở góc) */
+/* Marker theo category trên bản đồ */
+.map-marker-icon {
+    color: white; border-radius: 50%; width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; border: 2px solid white; font-size: 13px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+
+/* ADMIN BUTTON (chỉ hiện với ?admin=1, xem app.js) */
 .admin-trigger {
     position: fixed; bottom: 20px; right: 20px; width: 40px; height: 40px;
     background: #e2e8f0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
     color: #a0aec0; opacity: 0.3; cursor: pointer; transition: 0.3s; z-index: 9999;
 }
 .admin-trigger:hover { opacity: 1; background: #2d3748; color: white; }
+
+/* FAB "Hỏi AI" trên màn hình bản đồ — không đè legend/zoom control (Leaflet zoom
+   nằm góc trên-trái, sidebar chiếm bên trái, nên đặt FAB ở góc dưới-phải). */
+.ai-fab {
+    position: absolute; bottom: 28px; right: 28px; z-index: 1001;
+    width: 58px; height: 58px; border-radius: 50%; border: none;
+    background: linear-gradient(135deg, #d87c4f, #c2603a); color: white; font-size: 1.3rem;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.ai-map-chat {
+    position: absolute; bottom: 98px; right: 28px; z-index: 1001;
+    width: 320px; max-width: calc(100vw - 40px);
+    background: white; border-radius: 16px; padding: 16px; display: none;
+}
+.ai-map-chat.open { display: block; }
+.ai-map-chat-log { max-height: 200px; overflow-y: auto; }
+.ai-map-chat-log .chat-bubble {
+    background: #F8F9FA; border-radius: 10px; padding: 8px 10px; margin-bottom: 6px;
+}
+.ai-map-chat-log .chat-bubble.user { background: #2D3748; color: white; text-align: right; }
+@media (max-width: 575.98px) {
+    .ai-fab { bottom: 16px; right: 16px; }
+    .ai-map-chat { right: 10px; bottom: 86px; width: calc(100vw - 20px); }
+}
