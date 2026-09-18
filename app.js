@@ -27,7 +27,56 @@ $(document).ready(function () {
         currentRoutes: null,
         selectedRouteId: null,
         activeRouteIndex: 0,
+        currentItinerary: null,
     };
+    function getActiveItinerary() {
+    return tripState.currentItinerary;
+}
+function setCurrentItinerary(itinerary) {
+    if (!itinerary) return;
+
+    tripState.currentItinerary = itinerary;
+
+    if (tripState.currentRoutes?.routes) {
+        const index = tripState.currentRoutes.routes.findIndex(
+            r => r.route_id === itinerary.route_id
+        );
+
+        if (index >= 0) {
+            tripState.activeRouteIndex = index;
+        } else if (tripState.currentRoutes.routes[tripState.activeRouteIndex]) {
+            tripState.currentRoutes.routes[tripState.activeRouteIndex] = itinerary;
+        }
+    }
+
+    tripState.selectedRouteId =
+        itinerary.route_id || tripState.selectedRouteId;
+} 
+function refreshCurrentItinerary() {
+    const itinerary = getActiveItinerary();
+
+    if (!itinerary) return;
+
+    const vehicleType =
+        tripState.baseParams?.vehicle_type ||
+        $('#vehicle_type').val();
+
+    const availableMinutes =
+        tripState.currentRoutes?.available_minutes ||
+        itinerary.available_minutes ||
+        0;
+
+    renderTimelineAndMap(
+        itinerary,
+        vehicleType,
+        availableMinutes
+    );
+
+    renderItinerarySummary(itinerary);
+}
+setCurrentItinerary(newItinerary);
+refreshCurrentItinerary();
+
 
     const today = new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().split('T')[0];
     $('#trip_date').val(today).attr('min', today);
@@ -368,7 +417,60 @@ $(document).ready(function () {
             complete: () => $btn.html('<i class="fa-solid fa-check me-2"></i> Chốt lộ trình & Vẽ bản đồ').prop('disabled', false)
         });
     });
+function renderItinerarySummary(itinerary) {
+    if (!itinerary) return;
 
+    const places = itinerary.optimized_route || [];
+
+    const startTime =
+        places[0]?.arrive_time || '--:--';
+
+    const endTime =
+        places[places.length - 1]?.depart_time || '--:--';
+
+    const totalTime =
+        itinerary.total_time_minutes || 0;
+
+    const vehicleType =
+        tripState.baseParams?.vehicle_type ||
+        $('#vehicle_type').val();
+
+    const vehicleLabel = {
+        xe_may: 'Xe máy',
+        o_to: 'Ô tô',
+        xe_16_cho: 'Xe 16 chỗ',
+        xe_29_cho: 'Xe 29 chỗ',
+        di_bo: 'Đi bộ',
+        xe_dap: 'Xe đạp'
+    }[vehicleType] || vehicleType || 'Phương tiện';
+
+    $('#metrics-info').html(`
+        <div class="fw-bold mb-2">
+            <i class="fa-solid fa-route"></i>
+            ${itinerary.name || itinerary.route_id || 'Lộ trình hiện tại'}
+        </div>
+
+        <div>
+            <i class="fa-regular fa-clock"></i>
+            ${startTime} → ${endTime}
+        </div>
+
+        <div>
+            <i class="fa-solid fa-location-dot"></i>
+            ${places.length} địa điểm
+        </div>
+
+        <div>
+            <i class="fa-solid fa-car"></i>
+            ${vehicleLabel}
+        </div>
+
+        <div>
+            <i class="fa-solid fa-hourglass-half"></i>
+            Tổng thời gian: ${durationLabel(totalTime)}
+        </div>
+    `);
+} 
     function enterMapScreen(routeId) {
         const routes = tripState.currentRoutes.routes;
         let idx = routes.findIndex(r => r.route_id === routeId);
@@ -394,8 +496,10 @@ $(document).ready(function () {
             $('.route-tab').removeClass('btn-dark').addClass('btn-outline-dark');
             $(this).removeClass('btn-outline-dark').addClass('btn-dark');
             tripState.activeRouteIndex = newIdx;
-            tripState.selectedRouteId = routes[newIdx].route_id;
-            renderTimelineAndMap(routes[newIdx], $('#vehicle_type').val(), tripState.currentRoutes.available_minutes);
+tripState.selectedRouteId = routes[newIdx].route_id;
+
+setCurrentItinerary(routes[newIdx]);
+refreshCurrentItinerary();
 
             // Đồng bộ lựa chọn với backend (mục 11: source of truth) để lần chat
             // AI kế tiếp trên bản đồ thao tác đúng route đang xem. Không chặn UI
@@ -407,8 +511,8 @@ $(document).ready(function () {
             });
         });
 
-        renderTimelineAndMap(routes[idx], $('#vehicle_type').val(), tripState.currentRoutes.available_minutes);
-    }
+        setCurrentItinerary(routes[idx]);
+refreshCurrentItinerary(); 
 
     function renderTimelineAndMap(routeData, vType, totalMins) {
         const $timeline = $('#timeline-list').empty();
@@ -533,10 +637,14 @@ $(document).ready(function () {
     $('#btn-close-ai-chat').click(function () { $('#ai-map-chat').removeClass('open'); });
 
     function currentItineraryIds() {
-        if (!tripState.currentRoutes) return [];
-        const route = tripState.currentRoutes.routes[tripState.activeRouteIndex];
-        return (route?.optimized_route || []).map(p => p.id).filter(id => id !== 'gps_current');
-    }
+    const itinerary = getActiveItinerary();
+
+    if (!itinerary) return [];
+
+    return (itinerary.optimized_route || [])
+        .map(place => place.id)
+        .filter(id => id && id !== 'gps_current');
+} 
 
     function appendChatBubble(text, who) {
         $('#ai-map-chat-log').append('<div class="chat-bubble ' + who + '">' + text + '</div>');
@@ -583,11 +691,22 @@ $(document).ready(function () {
                     data: JSON.stringify({ session_id: tripState.sessionId }),
                     success: function (res) {
                         if (res.status === 'success') {
-                            tripState.currentRoutes.routes[tripState.activeRouteIndex] = res.itinerary;
-                            renderTimelineAndMap(res.itinerary, $('#vehicle_type').val(), tripState.currentRoutes.available_minutes);
-                        } else {
-                            appendChatBubble('Không thể cập nhật bản đồ: ' + res.message, 'assistant');
-                        }
+    setCurrentItinerary(res.itinerary);
+
+    refreshCurrentItinerary();
+
+    appendChatBubble(
+        refineRes.advice_text ||
+        'Mình đã cập nhật và sắp xếp lại lịch trình cho bạn.',
+        'assistant'
+    );
+} else {
+    appendChatBubble(
+        'Không thể cập nhật lộ trình: ' +
+        (res.message || 'Lỗi không xác định.'),
+        'assistant'
+    );
+}
                     },
                     error: () => appendChatBubble('Không thể tính lại lộ trình, vui lòng thử lại.', 'assistant'),
                 });
