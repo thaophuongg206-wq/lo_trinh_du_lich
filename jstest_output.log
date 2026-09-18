@@ -1,0 +1,60 @@
+
+=== BƯỚC 1: Điền Screen 1, bấm "Cùng lên kế hoạch nào" ===
+  ✅ 1.1 · đã gọi /api/ai-suggest
+  ✅ 1.2 · ai-suggest KHÔNG cần session_id lần đầu (đúng None)
+  ✅ 1.3 · đã gọi /api/routes ngay sau ai-suggest (mục 2: route sinh TRƯỚC Screen 2)
+  ✅ 1.4 · /api/routes nhận đúng start_lat/lon đã geocode
+  ✅ 1.5 · ai_selected_ids = suggested_ids từ ai-suggest
+  ✅ 1.6 · num_routes = 5
+  ✅ 1.7 · Screen 2 (chat-section) hiển thị
+  ✅ 1.8 · Screen 1 (hero-section) đã ẩn
+  ✅ 1.9 · Screen 2 hiển thị ĐÚNG 5 route CARD (không phải rổ địa điểm) — mục 2
+  ✅ 1.10 · card đầu tiên có class "selected" mặc định
+  ✅ 1.11 · nội dung card lấy từ route.name/description thật
+  ✅ 1.12 · nút "Cùng lên kế hoạch" đã được bật lại sau khi xong
+
+=== BƯỚC 2: Chọn route_2 trên Screen 2 ===
+  ✅ 2.1 · card route_2 được đánh dấu selected
+  ✅ 2.2 · card route_1 KHÔNG còn selected
+
+=== BƯỚC 3: "Chốt lộ trình" → Screen 3 phải hiện ĐÚNG route_2 (mục 10) ===
+  ✅ 3.1 · đã gọi /api/routes/select với route_2
+  ✅ 3.2 · KHÔNG gọi lại /api/routes (không regenerate — mục 10)
+  ✅ 3.3 · Screen 3 (map-section) hiển thị
+  ✅ 3.4 · Screen 2 đã ẩn
+  ✅ 3.5 · timeline có đúng 2 điểm của route_2 (Phở Thìn, Xôi Yến)
+  ✅ 3.6 · timeline hiển thị đúng tên địa điểm của route_2
+  ✅ 3.7 · Screen 3 vẫn có đủ 5 tab để lướt qua route khác
+  ✅ 3.8 · tab route_2 đang active (btn-dark)
+
+=== BƯỚC 4: Chuyển tab sang route_1 — không gọi lại thuật toán, chỉ đồng bộ lựa chọn ===
+  ✅ 4.1 · timeline đổi sang nội dung route_1 (Hồ Gươm)
+  ✅ 4.2 · tab route_1 giờ active, route_2 hết active
+  ✅ 4.3 · đã đồng bộ lựa chọn về backend (mục 11: source of truth)
+
+=== BƯỚC 5: AI FAB trên map — "Bỏ Cafe Giảng" ===
+  ✅ 5.1 · panel chat AI mở ra
+  ✅ 5.2 · đã gọi /api/ai-refine kèm session_id
+  ✅ 5.3 · current_ids gửi đúng itinerary ĐANG XEM (route_1: Hồ Gươm, Cafe Giảng)
+  ✅ 5.4 · sau đó gọi /api/itinerary/update (TÍNH LẠI, không sinh 5 route mới — mục 9)
+  ✅ 5.5 · KHÔNG gọi lại /api/optimize-route hay /api/routes (mục 9/10)
+  ✅ 5.6 · chat log có lời AI phản hồi
+  ✅ 5.7 · timeline được vẽ lại theo itinerary mới trả về
+  ✅ 5.8 · nút gửi chat được mở lại sau khi xong
+
+=== BƯỚC 6: quay lại Screen 2, bấm quick action "− Bớt một điểm" ===
+  ✅ 6.0 · quay lại Screen 2
+  ✅ 6.1 · tìm thấy chip "− Bớt một điểm"
+  ✅ 6.2 · quick action gọi ai-refine kèm session_id
+  ✅ 6.3 · sau đó gọi lại /api/routes để làm mới 3–5 route theo wishlist mới (mục 2)
+  ✅ 6.4 · wishlist gửi lên đã loại bỏ id vừa bị bớt (16)
+  ✅ 6.5 · route cards được vẽ lại (vẫn 5 card)
+  ✅ 6.6 · các chip được mở khoá lại sau khi xong
+
+=== BƯỚC 7: "Nghĩ lộ trình khác" — KHÔNG geocode lại vì điểm xuất phát chưa đổi ===
+  ✅ 7.1 · KHÔNG gọi lại Nominatim (start point không đổi, dùng cache)
+  ✅ 7.2 · vẫn sinh được route mới bình thường
+
+============================================================
+KẾT QUẢ jsdom: 42 PASS · 0 FAIL
+============================================================

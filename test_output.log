@@ -1,0 +1,95 @@
+/usr/local/lib/python3.12/dist-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+
+=== TEST A: 12 tiếng → nhận được 3–5 route hoàn chỉnh ===
+  ✅ A1 · HTTP 200
+  ✅ A2 · status success
+  ✅ A3 · trả về 3–5 route
+  ✅ A4 · có session_id
+  ✅ A5 · route là object độc lập đủ schema (mục 3)
+  ✅ A6 · route_id dạng route_N
+  ✅ A7 · mọi route đều có timeline + places
+  ✅ A8 · total_duration ≈ travel + visit + wait
+  ✅ A9 · không vượt quỹ thời gian 12h
+
+  → sinh 17 candidate, chọn ra 5 lộ trình:
+     route_1 [preference    ] 6 điểm ·   680ph (đi   20ph) · Hơi thở thiên nhiên & Sống chậm
+     route_2 [exploration   ] 6 điểm ·   678ph (đi   18ph) · Trải nghiệm trọn vẹn nhịp sống đô thị
+     route_3 [time_optimized] 6 điểm ·   676ph (đi   16ph) · 🏃 Tiết kiệm thời gian
+     route_4 [culture       ] 5 điểm ·   626ph (đi   26ph) · Không gian hoài niệm & Khám phá
+     route_5 [food          ] 4 điểm ·   609ph (đi    9ph) · Hành trình ẩm thực
+
+=== TEST G: các route có THỰC SỰ khác nhau không? ===
+  ✅ G1 · không có route trùng tập điểm
+  ✅ G2 · độ chồng lấn tối đa < 0.8
+  ✅ G3 · nhiều theme khác nhau
+  ✅ G4 · khác nhau về tổng thời gian
+  ✅ G5 · khác nhau về mức độ di chuyển
+  ✅ G6 · khác nhau về thứ tự
+  ✅ G7 · tên lộ trình không trùng nhau
+  → ma trận chồng lấn (Jaccard):
+     route_1 vs route_2: 0.09
+     route_1 vs route_3: 0.2
+     route_1 vs route_4: 0.0
+     route_1 vs route_5: 0.0
+     route_2 vs route_3: 0.33
+     route_2 vs route_4: 0.22
+     route_2 vs route_5: 0.11
+     route_3 vs route_4: 0.1
+     route_3 vs route_5: 0.43
+     route_4 vs route_5: 0.0
+
+=== TEST B: chọn route 2 ở Screen 2 → Screen 3 nhận ĐÚNG route 2 ===
+  ✅ B1 · HTTP 200
+  ✅ B2 · trả đúng route_2
+  ✅ B3 · tập điểm KHÔNG bị sinh lại
+  ✅ B4 · timeline giữ nguyên
+  ✅ B5 · total_duration giữ nguyên
+  ✅ B6 · gọi lại vẫn y hệt (không regenerate)
+  ✅ B7 · source of truth khớp: map = timeline = itinerary (mục 11)
+  → route_2 = 6 điểm: ['26', '14', '30', '3', '17', '25']
+
+=== TEST C: xoá một địa điểm ===
+  ✅ C1 · HTTP 200
+  ✅ C2 · status success
+  ✅ C3 · điểm bị xoá KHÔNG còn trong lộ trình
+  ✅ C4 · ghi vào excluded_ids (không xoá khỏi DB)
+  ✅ C5 · các điểm còn lại được giữ
+  ✅ C6 · bản ghi vẫn còn nguyên trong database
+  → đã xoá 'Miến lươn Chân Cầm' (id=14)
+     trước: ['26', '14', '30', '3', '17', '25']
+     sau  : ['26', '30', '25', '2', '17', '3']
+
+=== TEST D: xoá rồi fill-up ===
+  ✅ D1 · Greedy fill-up từ TOÀN BỘ candidate pool
+  ✅ D2 · điểm mới lấp vào không phải điểm đã bị loại
+  ✅ D3 · vẫn nằm trong quỹ thời gian
+  → fill-up thêm 1 điểm mới: ['2']
+
+=== TEST E: xoá 2–3 địa điểm liên tiếp ===
+  ✅ E1 · xoá liên tiếp lần 2 thành công
+  ✅ E1b · không điểm nào đã xoá quay lại
+  ✅ E2 · xoá liên tiếp lần 3 thành công
+  ✅ E2b · không điểm nào đã xoá quay lại
+  ✅ E3 · excluded_ids tích luỹ đủ
+  → đã xoá tổng cộng ['14', '30', '23'], lộ trình còn: ['26', '11', '25', '17', '2', '7', '3']
+
+=== TEST F: xoá A → thêm điểm mới → A KHÔNG xuất hiện lại ===
+  ✅ F1 · thêm điểm thành công
+  ✅ F2 · điểm đã xoá KHÔNG quay lại sau khi thêm điểm mới
+  ✅ F3 · điểm mới được ghim vào lộ trình
+  ✅ F4 · sinh lại 3–5 route mới vẫn không có điểm đã xoá
+  ✅ F5 · vẫn trả 3–5 route sau khi loại trừ
+  ✅ F6 · khôi phục được điểm đã loại
+  → thêm ['1', '10'] → lộ trình: ['10', '1', '25', '2', '17', '3']
+
+=== TEST H (bổ sung): tương thích ngược /api/optimize-route ===
+  ✅ H1 · endpoint cũ vẫn chạy
+  ✅ H2 · khoá cũ app.js đang dùng còn nguyên
+  ✅ H3 · optimized_route == places
+  ✅ H4 · phần tử optimized_route giữ đủ field cho frontend
+  ✅ H5 · ai_selected_ids không ghi đè được excluded_ids (mục 6)
+
+============================================================
+KẾT QUẢ: 48 PASS · 0 FAIL
+============================================================

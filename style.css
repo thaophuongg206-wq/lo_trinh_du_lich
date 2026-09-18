@@ -71,6 +71,20 @@ body, html {
 .quick-action-chip:hover { background: #2D3748; color: white; border-color: #2D3748; }
 .quick-action-chip:disabled { opacity: 0.6; cursor: wait; }
 
+/* Danh sách 3–5 lộ trình gợi ý ở Screen 2 (mục 2, mục 3): mỗi route là một
+   card độc lập, người dùng bấm để chọn trước khi "Chốt lộ trình". */
+.route-list { display: flex; flex-direction: column; gap: 14px; }
+.route-card {
+    border-radius: 16px; background: white; cursor: pointer;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.05); border: 2px solid #edf2f7;
+    padding: 18px 20px; transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.route-card:hover { transform: translateY(-3px); box-shadow: 0 12px 24px rgba(0,0,0,0.08); }
+.route-card.selected { border-color: #d87c4f; box-shadow: 0 8px 20px rgba(216,124,79,0.18); }
+.route-card-theme { display: inline-block; font-size: 0.8rem; font-weight: 700; color: #d87c4f; margin-bottom: 4px; }
+.route-card-desc { color: #718096; font-size: 0.92rem; margin-bottom: 8px; }
+.route-card-stats { color: #2D3748; font-size: 0.85rem; font-weight: 600; }
+
 /* MAP SECTION */
 #map-section { display: none; height: 100vh; width: 100vw; position: relative; }
 #map { height: 100%; width: 100%; }

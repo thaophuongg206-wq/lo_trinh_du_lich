@@ -39,6 +39,7 @@ class AISuggestRequest(BaseModel):
     start_time: str 
     end_time: str 
     model: Optional[str] = None
+    session_id: Optional[str] = None   # Nếu có, AI không được gợi ý điểm đã bị loại
 
 
 class TimelinePlace(BaseModel):
@@ -74,12 +75,41 @@ class AIRefineRequest(BaseModel):
     current_ids: List[str]
     instruction: str
     model: Optional[str] = None
+    session_id: Optional[str] = None   # Để ghi excluded_ids vào state backend (mục 6)
 
 
 class AIRefineResponse(BaseModel):
     advice_text: str
     suggested_ids: List[str]
     invalid_ids: List[str] = []
+    removed_ids: List[str] = []        # Điểm vừa bị loại trong lượt này
+    excluded_ids: List[str] = []       # Toàn bộ ràng buộc loại trừ của phiên
+    session_id: Optional[str] = None
+
+
+# ============================================================
+# NHẬN DIỆN Ý ĐỊNH "BỎ ĐIỂM" (mục 6)
+# ------------------------------------------------------------
+# Chỉ ghi vào excluded_ids khi người dùng THỰC SỰ muốn bỏ điểm. Model 1B chạy
+# local thỉnh thoảng trả thiếu id do lỗi parse; nếu cứ thấy danh sách ngắn đi là
+# loại vĩnh viễn thì một lần AI lỗi sẽ khoá luôn địa điểm đó khỏi cả phiên.
+# Có ý định bỏ  → ghi excluded_ids (ràng buộc cứng, không quay lại).
+# Không có      → chỉ cập nhật itinerary lượt này, không khoá gì cả.
+# Đường đi chắc chắn nhất vẫn là /api/itinerary/update với remove_ids tường minh.
+# ============================================================
+_REMOVE_INTENT_KEYWORDS = (
+    "bo ", "bot", "xoa", "loai", "khong thich", "khong muon", "thay ",
+    "doi ", "huy", "remove", "delete", "drop", "bo di", "chan",
+)
+
+
+def _has_remove_intent(instruction: str) -> bool:
+    try:
+        from main import _strip_diacritics
+        text = _strip_diacritics(instruction or "")
+    except Exception:
+        text = (instruction or "").lower()
+    return any(kw in text for kw in _REMOVE_INTENT_KEYWORDS)
 
 
 def _line_for_point(p: dict) -> str:
@@ -381,6 +411,13 @@ def suggest_route(req: AISuggestRequest):
     # Lấy dữ liệu và chọn candidate theo mức độ liên quan (không còn cắt cứng [:15])
     all_points = fetch_all_points(vehicle_type=req.vehicle_type)
 
+    # Tôn trọng ràng buộc loại trừ của phiên (nếu người dùng quay lại Screen 1
+    # sau khi đã bỏ vài điểm, AI không được gợi ý lại đúng những điểm đó).
+    from itinerary_store import store
+    session = store.get(req.session_id)
+    if session is not None and session.excluded_ids:
+        all_points = [p for p in all_points if p["id"] not in session.excluded_ids]
+
     if not all_points:
         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
 
@@ -412,6 +449,7 @@ def refine_route(req: AIRefineRequest):
     ai_selected_ids = suggested_ids để tính lại route/timeline/map — tái sử
     dụng đúng luồng fill-up Greedy đã có, không cần thuật toán tối ưu riêng."""
     from main import fetch_all_points
+    from itinerary_store import store
 
     try:
         fmt = "%H:%M"
@@ -423,9 +461,18 @@ def refine_route(req: AIRefineRequest):
     except Exception:
         pass
 
+    session = store.get(req.session_id)
+    excluded = set(session.excluded_ids) if session else set()
+
     all_points = fetch_all_points(vehicle_type=req.vehicle_type)
     if not all_points:
         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
+
+    # Điểm đã bị loại KHÔNG được đưa vào context của AI (mục 8): nếu vẫn để AI
+    # nhìn thấy, chỉ cần người dùng nói "thêm quán ăn trưa" là nó gợi ý lại đúng
+    # cái quán vừa bị bỏ, và điểm đó lại xuất hiện trên bản đồ.
+    if excluded:
+        all_points = [p for p in all_points if p["id"] not in excluded]
 
     id_to_point = {p["id"]: p for p in all_points}
     current_points = [id_to_point[i] for i in req.current_ids if i in id_to_point]
@@ -448,8 +495,28 @@ def refine_route(req: AIRefineRequest):
     valid_ids_set = {p["id"] for p in context_points}
     advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set)
 
+    # Chốt chặn cuối: dù prompt có dặn thế nào, id đã bị loại vẫn không được lọt
+    # ra ngoài — excluded_ids là ràng buộc của hệ thống, không phải gợi ý cho AI.
+    suggested_ids = [i for i in suggested_ids if i not in excluded]
+
+    # ── GHI Ý ĐỊNH "BỎ ĐIỂM" VÀO STATE BACKEND (mục 6, 8) ──
+    # Đây là mắt xích từng bị đứt: trước đây việc bỏ điểm chỉ thể hiện bằng một
+    # danh sách ngắn hơn trả về cho frontend, không có ai ghi nhớ, nên Greedy
+    # ở lần tính kế tiếp nhặt lại điểm đó từ DB.
+    removed_ids = []
+    if session is not None:
+        dropped = [i for i in req.current_ids if i not in suggested_ids and i not in excluded]
+        if dropped and _has_remove_intent(req.instruction):
+            removed_ids = session.exclude(dropped)
+        # Điểm AI giữ lại/thêm mới trở thành must-visit cho lần tính lộ trình sau.
+        session.pin(suggested_ids)
+        excluded = set(session.excluded_ids)
+
     return AIRefineResponse(
         advice_text=advice_text,
         suggested_ids=suggested_ids,
         invalid_ids=invalid_ids,
+        removed_ids=removed_ids,
+        excluded_ids=sorted(excluded),
+        session_id=req.session_id,
     )

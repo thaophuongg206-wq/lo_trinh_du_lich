@@ -1,0 +1,1709 @@
+--- repo/main.py	2026-09-17 16:33:30.474072194 +0000
++++ work/main.py	2026-09-18 10:36:23.658723595 +0000
+@@ -2,7 +2,13 @@
+ import re
+ import unicodedata
+ import requests
+-import pyodbc
++try:
++    import pyodbc
++except ImportError:
++    # Máy không cài driver ODBC vẫn chạy được: get_db_connection() đã có sẵn
++    # nhánh fallback sang SQLite (dulich.db) — trước đây nhánh đó không bao giờ
++    # tới được vì `import pyodbc` chết ngay từ dòng import.
++    pyodbc = None
+ import math
+ import random
+ import io
+@@ -26,6 +32,9 @@
+ 
+ import sqlite3
+ 
++# State itinerary phía backend (excluded_ids, route đã sinh, current_itinerary).
++from itinerary_store import store
++
+ SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
+ DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
+ SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
+@@ -36,6 +45,8 @@
+     Nếu thất bại (máy bạn bè chưa cài SQL Server), tự động dùng SQLite dulich.db có sẵn trong Git.
+     """
+     try:
++        if pyodbc is None:
++            raise RuntimeError("pyodbc chưa được cài — dùng SQLite")
+         conn = pyodbc.connect(
+             f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+             f'SERVER={SERVER};'
+@@ -69,10 +80,22 @@
+     start_lon: Optional[float] = None   # Kinh độ GPS
+     user_preference: str = ""     # Mô tả sở thích không gian của người dùng (VD: "yên tĩnh, view đẹp")
+     weight: int = 50              # 0 = ưu tiên khoảng cách (đi gần) .. 100 = ưu tiên đúng sở thích (trải nghiệm)
+-    ai_selected_ids: Optional[List[str]] = None  # ID điểm đến do AI (Ollama) đã chọn sẵn từ /api/ai-suggest.
+-                                                   # Nếu có, Backend BỎ QUA toàn bộ bước tự sinh candidate
+-                                                   # bằng scorer/greedy, chỉ lo sắp xếp lại thứ tự tối ưu
+-                                                   # và kiểm tra giờ giấc cho đúng tập điểm AI đã đề xuất.
++    ai_selected_ids: Optional[List[str]] = None  # ID điểm đến do AI (Ollama) gợi ý từ /api/ai-suggest.
++                                                   # ĐÂY CHỈ LÀ ƯU TIÊN (must-visit), KHÔNG phải danh sách
++                                                   # duy nhất: Greedy vẫn được dùng toàn bộ candidate pool
++                                                   # để fill-up quỹ thời gian còn trống (mục 5).
++
++    # ---- STATE / RÀNG BUỘC (mục 6, 7, 8, 11) ----
++    session_id: Optional[str] = None              # Phiên lập lộ trình; nếu có, backend nhớ excluded_ids
++    excluded_ids: Optional[List[str]] = None      # Điểm bị loại BỔ SUNG cho lần gọi này (gộp với state phiên)
++    num_routes: int = 5                           # Số route mong muốn (chặn trong khoảng 3..5)
++
++    @field_validator("num_routes")
++    @classmethod
++    def validate_num_routes(cls, v):
++        if v is None:
++            return 5
++        return max(3, min(5, int(v)))
+ 
+     @field_validator("weight")
+     @classmethod
+@@ -298,6 +321,64 @@
+     return f"Lộ trình {route_index}"
+ 
+ 
++# ============================================================
++# BỘ CHỦ ĐỀ LỘ TRÌNH (mục 4)
++# ------------------------------------------------------------
++# Mỗi route candidate được gắn một `theme`. Theme KHÔNG phải nhãn trang trí:
++# nó quyết định scorer nào được dùng, pool candidate nào được cấp, và ngân
++# sách thời gian nào được áp — tức là các route thực sự khác nhau về tập
++# điểm / thứ tự / tổng thời gian / mức độ di chuyển, chứ không phải "5 route
++# đổi tên".
++# ============================================================
++ROUTE_THEMES = {
++    "time_optimized": {"label": "🏃 Tiết kiệm thời gian", "desc": "Đi gần, ít di chuyển, tận dụng tối đa thời gian tham quan."},
++    "preference":     {"label": "🧭 Theo sở thích của bạn", "desc": "Bám sát mô tả mong muốn bạn đã nhập."},
++    "relax":          {"label": "🌿 Thong thả", "desc": "Ít điểm hơn, mỗi điểm ở lâu hơn, không vội."},
++    "food":           {"label": "🍜 Ẩm thực", "desc": "Xoay quanh quán ăn và cà phê."},
++    "culture":        {"label": "🏛️ Văn hoá & tham quan", "desc": "Ưu tiên di tích, bảo tàng, điểm check-in."},
++    "exploration":    {"label": "🧳 Khám phá", "desc": "Đi xa hơn một chút để gặp những điểm ít người chọn."},
++    "diverse":        {"label": "🌈 Đa dạng", "desc": "Mỗi điểm một kiểu trải nghiệm khác nhau."},
++    "highlight":      {"label": "⭐ Điểm nổi bật", "desc": "Gom các địa điểm được đánh giá cao nhất."},
++}
++
++# Nhóm loại hình dùng cho theme food / culture.
++_FOOD_CATEGORIES = {"Ăn uống", "Cafe"}
++_CULTURE_CATEGORIES = {"Tham quan", "Checkin"}
++
++
++def _fmt_minutes(mins) -> str:
++    """90 -> '1h30', 45 -> '45 phút'."""
++    mins = int(round(mins or 0))
++    if mins < 60:
++        return f"{mins} phút"
++    h, m = divmod(mins, 60)
++    return f"{h}h{m:02d}" if m else f"{h}h"
++
++
++def generate_route_description(route_points: list, theme: str, total_minutes, travel_minutes) -> str:
++    """
++    Mô tả ngắn, sinh từ SỐ LIỆU THẬT của route (số điểm, cơ cấu loại hình,
++    tổng thời gian, thời gian di chuyển) — không phải câu quảng cáo cố định,
++    để người dùng ở Screen 2 so sánh được 3–5 lộ trình bằng thông tin thực.
++    """
++    visitable = [p for p in route_points if p.get("loai_hinh") != "diem_xuat_phat"]
++    counts = {}
++    for p in visitable:
++        lh = p.get("loai_hinh") or "Khác"
++        counts[lh] = counts.get(lh, 0) + 1
++    breakdown = ", ".join(f"{n} {lh.lower()}" for lh, n in sorted(counts.items(), key=lambda kv: -kv[1]))
++
++    parts = [f"{len(visitable)} điểm"]
++    if breakdown:
++        parts.append(breakdown)
++    parts.append(f"tổng {_fmt_minutes(total_minutes)}")
++    parts.append(f"di chuyển {_fmt_minutes(travel_minutes)}")
++
++    prefix = ROUTE_THEMES.get(theme, {}).get("desc", "")
++    body = " · ".join(parts)
++    return f"{prefix} {body}." if prefix else f"{body}."
++
++
+ def get_global_osrm_matrix(points_list, vehicle_type: str = "xe_may"):
+     """
+     Lấy ma trận khoảng cách và thời gian di chuyển từ OSRM.
+@@ -634,8 +715,201 @@
+     return all_points
+ 
+ 
+-@app.post("/api/optimize-route")
+-async def optimize_route(request: OptimizationRequest):
++# ============================================================
++# CHỌN 3–5 LỘ TRÌNH THỰC SỰ KHÁC NHAU (mục 4)
++# ------------------------------------------------------------
++# LỖI CŨ: try_add() lấy fingerprint = (thứ tự id, label). Vì label khác nhau
++# giữa 6 scorer × 6 mốc ngân sách, CÙNG MỘT tập điểm được ghi nhận tới vài
++# chục lần như những "route khác nhau". Sau đó danh sách được sort theo
++# (-số điểm, tổng thời gian) rồi cắt [:5] → 5 phần tử đầu gần như luôn là
++# CÙNG một lộ trình dài nhất, chỉ khác cái tên chiến lược. Đúng hiện tượng
++# "5 route chỉ đổi tên" mà mục 4 cấm.
++#
++# CÁCH SỬA:
++#   1) Khử trùng lặp theo TẬP ĐIỂM (frozenset id), không theo nhãn.
++#   2) Chọn tập cuối bằng max-min diversity: route đầu lấy theo chất lượng,
++#      các route sau phải đủ KHÁC (Jaccard overlap dưới ngưỡng) so với mọi
++#      route đã chọn, đồng thời ưu tiên theme chưa xuất hiện.
++#   3) Nếu dữ liệu nghèo, nới ngưỡng dần và chấp nhận trả 3 hoặc 4 route
++#      (mục 4 cho phép) thay vì bịa thêm route trùng cho đủ 5.
++# ============================================================
++JACCARD_LIMITS = (0.45, 0.60, 0.75, 1.01)  # nới dần khi không đủ route
++MIN_ROUTES = 3
++
++
++def _route_id_set(route: dict) -> frozenset:
++    return frozenset(
++        p["id"] for p in route.get("optimized_route", []) if p.get("id") != "gps_current"
++    )
++
++
++def _jaccard(a: frozenset, b: frozenset) -> float:
++    if not a and not b:
++        return 1.0
++    union = a | b
++    if not union:
++        return 1.0
++    return len(a & b) / len(union)
++
++
++def _route_quality(route: dict, available_minutes: float) -> float:
++    """Chất lượng một route: nhiều điểm, khớp sở thích, dùng hết quỹ thời gian."""
++    n_places = len(_route_id_set(route))
++    utilization = 0.0
++    if available_minutes > 0:
++        utilization = min(1.0, (route.get("total_time_minutes") or 0) / available_minutes)
++    pref = route.get("avg_preference_score", 0.5)
++    return n_places * 1.0 + pref * 2.0 + utilization * 2.0
++
++
++def select_diverse_routes(candidates: list, available_minutes: float, max_routes: int = 5) -> list:
++    """Chọn tối đa `max_routes` lộ trình khác nhau thực sự; có thể trả về 3–4
++    nếu dữ liệu không cho phép nhiều hơn mà vẫn giữ được sự khác biệt."""
++    if not candidates:
++        return []
++
++    scored = sorted(
++        ({"route": r, "ids": _route_id_set(r), "q": _route_quality(r, available_minutes)} for r in candidates),
++        key=lambda c: -c["q"],
++    )
++
++    max_routes = max(MIN_ROUTES, min(5, max_routes))
++    chosen = [scored[0]]
++    used_themes = {scored[0]["route"].get("theme")}
++
++    for limit in JACCARD_LIMITS:
++        if len(chosen) >= max_routes:
++            break
++        # Hai lượt quét cho mỗi ngưỡng: lượt 1 chỉ nhận theme CHƯA xuất hiện, lượt 2
++        # mới nhận theme trùng. Nhờ vậy 3–5 route trả về trải đều các chủ đề thay vì
++        # dồn hết vào một chiến lược tình cờ cho điểm chất lượng cao.
++        for prefer_new_theme in (True, False):
++            for cand in scored:
++                if len(chosen) >= max_routes:
++                    break
++                if any(cand["route"] is c["route"] for c in chosen):
++                    continue
++                theme = cand["route"].get("theme")
++                if prefer_new_theme and theme in used_themes:
++                    continue
++                overlap = max(_jaccard(cand["ids"], c["ids"]) for c in chosen)
++                if overlap > limit:
++                    continue
++                chosen.append(cand)
++                used_themes.add(theme)
++
++    # Sắp xếp hiển thị: route mạnh nhất lên đầu để Screen 2 gợi ý mặc định đúng.
++    chosen.sort(key=lambda c: -c["q"])
++    return [c["route"] for c in chosen]
++
++
++def build_timeline(places: list) -> list:
++    """
++    Timeline phẳng cho Screen 2/3: xen kẽ 'visit' và 'travel'. Sinh TỪ chính
++    `places` (arrive/depart/travel_to_next đã được finalize_route mô phỏng),
++    nên map, timeline và route summary luôn nói cùng một câu chuyện (mục 11).
++    """
++    timeline = []
++    for i, p in enumerate(places):
++        timeline.append({
++            "type": "visit",
++            "order": i + 1,
++            "place_id": p["id"],
++            "name": p["ten"],
++            "loai_hinh": p.get("loai_hinh", ""),
++            "start": p.get("arrive_time"),
++            "end": p.get("depart_time"),
++            "duration": p.get("visit_time", 0),
++            "wait_time": p.get("wait_time", 0),
++            "lat": p.get("lat"),
++            "lon": p.get("lon"),
++        })
++        if i < len(places) - 1 and (p.get("travel_to_next") or 0) > 0:
++            timeline.append({
++                "type": "travel",
++                "from_id": p["id"],
++                "to_id": places[i + 1]["id"],
++                "from": p["ten"],
++                "to": places[i + 1]["ten"],
++                "start": p.get("depart_time"),
++                "end": places[i + 1].get("arrive_time"),
++                "duration": p.get("travel_to_next", 0),
++                "distance_km": p.get("distance_to_next", 0),
++            })
++    return timeline
++
++
++def format_route_object(route: dict, index: int) -> dict:
++    """
++    Đóng gói route thành MỘT THỰC THỂ ĐỘC LẬP theo schema mục 3.
++
++    Giữ nguyên các khoá cũ (strategy / route_name / optimized_route /
++    total_time_minutes) để app.js hiện tại không vỡ — mục 13 yêu cầu không
++    sửa frontend ngoài phạm vi cần thiết.
++    """
++    places = route.get("optimized_route", [])
++    travel_time = sum((p.get("travel_to_next") or 0) for p in places)
++    visit_time = sum((p.get("visit_time") or 0) for p in places)
++    wait_time = sum((p.get("wait_time") or 0) for p in places)
++    distance_km = sum((p.get("distance_to_next") or 0) for p in places)
++    theme = route.get("theme", "diverse")
++    total = route.get("total_time_minutes", 0)
++
++    route_points = [{"loai_hinh": p.get("loai_hinh")} for p in places]
++    name = route.get("route_name") or generate_route_name(route_points, index)
++
++    route.update({
++        "route_id": f"route_{index}",
++        "name": name,
++        "theme": theme,
++        "theme_label": ROUTE_THEMES.get(theme, {}).get("label", theme),
++        "description": generate_route_description(places, theme, total, travel_time),
++        "places": places,
++        "timeline": build_timeline(places),
++        "total_duration": round(total, 1),
++        "travel_time": round(travel_time, 1),
++        "visit_time": round(visit_time, 1),
++        "wait_time": round(wait_time, 1),
++        "distance_km": round(distance_km, 1),
++        "place_count": len(places),
++        # ---- khoá cũ, giữ cho tương thích ngược ----
++        "route_name": name,
++    })
++    return route
++
++
++def run_route_generation(request: OptimizationRequest,
++                         excluded_ids: set = None,
++                         must_visit_ids: set = None,
++                         force_visit_ids: set = None,
++                         mode: str = "multi"):
++    """
++    LÕI SINH LỘ TRÌNH — dùng chung cho mọi endpoint (mục 10, 11).
++
++    Trước đây toàn bộ logic này nằm trực tiếp trong @app.post("/api/optimize-route"),
++    nên không endpoint nào khác (chọn route, cập nhật itinerary, chatbot) tái sử
++    dụng được — mỗi luồng lại tự gọi lại HTTP và sinh lại route mới. Tách ra thành
++    hàm thuần để:
++      * /api/routes            → mode="multi"  : sinh 3–5 route candidate
++      * /api/itinerary/update  → mode="single" : tính lại đúng MỘT lịch trình
++      * /api/optimize-route    → giữ nguyên hành vi cũ cho frontend hiện tại
++
++    excluded_ids : RÀNG BUỘC CỨNG. Áp ngay tại nguồn candidate pool nên mọi nhánh
++                   phía sau (greedy, fill-up, DP, 2-opt) đều tự động tôn trọng
++                   (mục 6, 7). KHÔNG hề đụng tới database.
++    must_visit_ids: điểm phải giữ (từ AI hoặc từ itinerary hiện tại) — chỉ là ưu
++                   tiên tuyệt đối trong greedy, KHÔNG giới hạn candidate pool (mục 5).
++    force_visit_ids: điểm người dùng VỪA CHỦ ĐỘNG yêu cầu thêm. Ưu tiên cao hơn
++                   must_visit một bậc, để khi quỹ thời gian đã gần đầy thì điểm
++                   mới vẫn chen được vào và điểm auto-fill bị đẩy ra — đúng tinh
++                   thần "A → B → X → D → E" của mục 9.
++    """
++    excluded_ids = set(excluded_ids or ())
++    force_visit_ids = set(force_visit_ids or ()) - excluded_ids
++    must_visit_ids = set(must_visit_ids or ()) | force_visit_ids
++    # Điểm vừa bị loại thì không thể đồng thời là must-visit.
++    must_visit_ids -= excluded_ids
++
+     # 1. XỬ LÝ NGÀY KHỞI HÀNH (trip_date)
+     try:
+         if request.trip_date:
+@@ -667,6 +941,22 @@
+     all_points = [p for p in all_points if p["cap_do_tiep_can"] <= max_access]
+     vehicle_note = VEHICLE_ACCESS_NOTE.get(request.vehicle_type, "")
+ 
++    # 3b'. ÁP RÀNG BUỘC LOẠI TRỪ NGAY TẠI NGUỒN (mục 6, 7)
++    # Đây là điểm mấu chốt: lọc ở ĐÂY nghĩa là excluded_ids trở thành ràng buộc
++    # thật của TOÀN BỘ pipeline phía sau — ma trận OSRM, greedy, fill-up, DP,
++    # 2-opt đều không bao giờ nhìn thấy điểm đã bị loại. Không phải "ẩn ở
++    # frontend", không phải "xoá khỏi một mảng tạm", và tuyệt đối không xoá dữ
++    # liệu khỏi database: bản ghi vẫn nguyên trong DIA_DIEM, chỉ là phiên này
++    # không được dùng nó.
++    if excluded_ids:
++        all_points = [p for p in all_points if p["id"] not in excluded_ids]
++        if not all_points:
++            return {
++                "status": "error",
++                "message": "Bạn đã loại quá nhiều địa điểm, không còn lựa chọn nào phù hợp.",
++                "excluded_ids": sorted(excluded_ids),
++            }
++
+     # 3c. TÍNH PREFERENCE SCORE CHO TỪNG ĐIỂM (BUG 1 FIX)
+     # user_preference + weight phải thực sự tham gia scoring/route generation,
+     # không chỉ được nhận vào rồi bỏ qua.
+@@ -742,7 +1032,7 @@
+     #  Hàm cũ còn giữ nguyên lỗi visit_time*k_dens nên loại bỏ để tránh gây nhầm lẫn
+     #  hoặc bị dùng nhầm trong tương lai. Xem phần báo cáo audit.)
+ 
+-    def finalize_route(selected_points, k_weather, route_label, route_index):
++    def finalize_route(selected_points, k_weather, route_label, route_index, route_theme="diverse"):
+         """
+         Sắp xếp thứ tự thăm điểm tối ưu, xử lý drop-point khi route vi phạm giờ
+         đóng cửa, rồi tạo chi tiết lộ trình cuối cùng (kèm route_name theo nội
+@@ -756,6 +1046,9 @@
+         - Số điểm lớn hơn: fallback về optimize_sequence (2-opt + Or-opt luân
+           phiên), kèm vòng lặp drop-point dựa trên violation_index (BUG-6 fix).
+         """
++        # Chốt chặn thứ ba: không route nào được finalize nếu còn chứa điểm bị loại.
++        if excluded_ids:
++            selected_points = [p for p in selected_points if p["id"] not in excluded_ids]
+         if len(selected_points) < 2:
+             return None
+ 
+@@ -863,14 +1156,19 @@
+         route_pts = [selected_points[i] for i in best_route_indices]
+         avg_preference = sum(p.get("preference_score", 0.5) for p in route_pts) / len(route_pts)
+ 
++        covered_must = len([p for p in route_pts if p["id"] in must_visit_ids])
++
+         return {
+             "dropped_point": dropped_point,
+             "total_time_minutes": round(total_actual, 1),
+             "vehicle_type": request.vehicle_type,
+             "trip_date": str(base_date),
+             "strategy": route_label,
++            "theme": route_theme,
+             "route_name": generate_route_name(route_pts, route_index),
+             "avg_preference_score": round(avg_preference, 3),
++            "must_visit_covered": covered_must,
++            "must_visit_total": len(must_visit_ids),
+             "optimized_route": final_route_details
+         }
+ 
+@@ -894,12 +1192,24 @@
+         if departure > origin_close or departure > end_clock:
+             return None
+         selected  = [origin]
+-        unvisited = list(candidate_pool)
++
++        # ── CANDIDATE POOL CỦA GREEDY (mục 7) ──
++        # Chốt chặn thứ hai, cố ý trùng với bộ lọc ở bước 3b': kể cả khi sau này
++        # có ai đó truyền thẳng một pool chưa lọc vào hàm này, điểm đã bị loại
++        # vẫn không thể lọt vào lộ trình. `used_ids` đảm bảo không ghé trùng điểm.
++        used_ids  = {origin["id"]}
++        unvisited = [
++            p for p in candidate_pool
++            if p["id"] not in used_ids
++            and p["id"] not in excluded_ids
++        ]
+         while True:
+             best_next  = None
+             best_score = float('inf')
+             best_dep   = departure
+             for p in unvisited:
++                if p["id"] in used_ids or p["id"] in excluded_ids:
++                    continue
+                 dist = calc_dist(selected[-1], p)
+                 est_travel = get_travel_minutes(selected[-1]["id"], p["id"], dist, global_matrix, k_weather, request.vehicle_type, departure)
+                 est_visit  = p.get("time") or 0
+@@ -910,8 +1220,13 @@
+                 nd         = sv + timedelta(minutes=est_visit)
+                 if nd <= p_close and nd <= end_clock:
+                     sc = score_fn(selected[-1], p, dist)
+-                    # Ưu tiên tuyệt đối: must-visit luôn được chọn trước
+-                    if p["id"] in must_visit_ids:
++                    # ƯU TIÊN PHÂN TẦNG:
++                    #   force_visit (user vừa yêu cầu thêm) > must_visit (đang giữ) > phần còn lại.
++                    # Nếu để force và must cùng một mức, khi quỹ giờ gần đầy Greedy sẽ
++                    # nhồi hết các điểm đang giữ trước rồi hết chỗ cho điểm mới.
++                    if p["id"] in force_visit_ids:
++                        sc = -9999999 + sc * 0.001
++                    elif p["id"] in must_visit_ids:
+                         sc = -99999 + sc * 0.001
+                     if sc < best_score:
+                         best_score = sc
+@@ -919,6 +1234,7 @@
+                         best_dep   = nd
+             if best_next:
+                 selected.append(best_next)
++                used_ids.add(best_next["id"])
+                 unvisited.remove(best_next)
+                 departure = best_dep
+             else:
+@@ -934,158 +1250,223 @@
+         return (1.0 - p.get("preference_score", 0.5)) * PREF_PENALTY_SCALE_KM
+ 
+     def generate_routes_with_factor():
+-        generated         = []
+-        seen_fingerprints = set()
++        """
++        Sinh KHO route candidate theo nhiều CHIẾN LƯỢC KHÁC NHAU THỰC SỰ (mục 4).
++
++        Mỗi chiến lược khác nhau ở ít nhất một trong: candidate pool được cấp,
++        hàm chấm điểm greedy, và ngân sách thời gian. Nhờ vậy các route khác
++        nhau về tập địa điểm, thứ tự, tổng thời gian, mức độ di chuyển và đặc
++        điểm trải nghiệm — không phải cùng một lộ trình mang 5 cái tên.
++
++        Trả về danh sách candidate thô; việc chọn ra 3–5 lộ trình cuối cùng do
++        select_diverse_routes() đảm nhiệm.
++        """
++        generated    = []
++        seen_id_sets = {}   # frozenset(id) -> vị trí trong `generated`
+ 
+-        def try_add(pts, k_weather, label):
++        def try_add(pts, k_weather, label, theme):
+             if not pts or len(pts) < 2:
+                 return
+             route_index = len(generated) + 1
+-            r = finalize_route(pts, k_weather, label, route_index)
++            r = finalize_route(pts, k_weather, label, route_index, route_theme=theme)
+             if not r:
+                 return
+-            # Fingerprint gồm thứ tự ghé thăm + chiến lược → cho phép cùng tập điểm
+-            # nhưng khác thứ tự hoặc khác chiến lược được giữ lại (đa mục tiêu).
+-            fp = (
+-                tuple(p["id"] for p in r["optimized_route"]),
+-                label
+-            )
+-            if fp not in seen_fingerprints:
+-                seen_fingerprints.add(fp)
+-                r["route_id"] = len(generated) + 1
+-                generated.append(r)
+ 
+-        w_exp = request.weight / 100.0
+-        w_time = 1.0 - w_exp
++            # KHỬ TRÙNG LẶP THEO TẬP ĐIỂM, KHÔNG THEO NHÃN (mục 4).
++            # Cùng một tập địa điểm thì dù nhãn chiến lược khác nhau vẫn chỉ là
++            # MỘT lộ trình — trước đây đưa nhãn vào fingerprint chính là nguyên
++            # nhân sinh ra hàng chục "route" trùng nhau.
++            fp = frozenset(p["id"] for p in r["optimized_route"] if p["id"] != "gps_current")
++            if not fp:
++                return
++            if fp in seen_id_sets:
++                # Giữ bản tốt hơn: phủ được nhiều must-visit hơn, rồi tới nhanh hơn.
++                old = generated[seen_id_sets[fp]]
++                better = (r.get("must_visit_covered", 0), -r["total_time_minutes"]) > \
++                         (old.get("must_visit_covered", 0), -old["total_time_minutes"])
++                if better:
++                    generated[seen_id_sets[fp]] = r
++                return
++            seen_id_sets[fp] = len(generated)
++            generated.append(r)
+ 
+         for origin in starting_points:
+             k_weather      = get_weather_factor(origin["lat"], origin["lon"])
++            # Toàn bộ candidate pool (đã trừ excluded_ids ở bước 3b') — AI chỉ là
++            # ƯU TIÊN, không phải danh sách duy nhất, nên Greedy vẫn được quyền
++            # fill-up từ đây khi còn dư thời gian (mục 5).
+             base_unvisited = [p for p in all_points if p["id"] != origin["id"]]
++            if not base_unvisited:
++                continue
+ 
+             pool_near  = sorted(base_unvisited, key=lambda p: calc_dist(origin, p))
+             pool_value = sorted(base_unvisited, key=lambda p: -(p.get("score") or 0))
++            pool_food  = [p for p in base_unvisited if p.get("loai_hinh") in _FOOD_CATEGORIES]
++            pool_cult  = [p for p in base_unvisited if p.get("loai_hinh") in _CULTURE_CATEGORIES]
++            pool_long  = sorted(base_unvisited, key=lambda p: -(p.get("time") or 0))
++            pool_far   = list(reversed(pool_near))
++
++            # ── SCORER THEO CHỦ ĐỀ ──
++            # (theme, nhãn hiển thị, pool, score_fn, hệ số ngân sách thời gian)
++            # Lưu ý ngân sách khác nhau → tổng thời gian khác nhau, đúng yêu cầu
++            # "các route cần khác nhau về tổng thời gian" (mục 4).
++            strategies = [
++                ("time_optimized", base_unvisited,
++                 lambda last, p, d: d, 1.0),
++
++                ("preference", base_unvisited,
++                 lambda last, p, d: d * (1 - pref_weight) + _preference_penalty(p) * pref_weight, 1.0),
++
++                # Thong thả: quỹ thời gian ngắn hơn + ưu tiên điểm ở được lâu
++                # → ít điểm hơn, mỗi điểm lâu hơn, ít di chuyển hơn.
++                ("relax", pool_long,
++                 lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05, 0.7),
++
++                ("food", pool_food or base_unvisited,
++                 lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _FOOD_CATEGORIES else 0), 1.0),
++
++                ("culture", pool_cult or base_unvisited,
++                 lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _CULTURE_CATEGORIES else 0), 1.0),
++
++                # Khám phá: bắt đầu từ nửa xa của bản đồ → tập điểm lệch hẳn.
++                ("exploration", pool_far[: max(8, len(pool_far) // 2)],
++                 lambda last, p, d: d / ((p.get("score") or 1) + 1), 1.0),
++
++                # Đa dạng: phạt nặng nếu trùng loại hình với điểm vừa ghé.
++                ("diverse", base_unvisited,
++                 lambda last, p, d: d + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0), 1.0),
+ 
+-            # ── Scorers với hành vi thực sự khác nhau ──
+-            # BUG 1 FIX: "Theo sở thích" và "Cân bằng" giờ thực sự dùng preference_score
+-            # (từ user_preference) trộn với distance theo đúng tỉ lệ pref_weight (từ weight).
+-            # "Gần nhất" / "Nổi bật" vẫn giữ nguyên thuần khoảng cách / điểm đánh giá — đây
+-            # là lựa chọn có chủ đích (người dùng có thể muốn xem route thuần "gần nhất"),
+-            # không phải lỗi bỏ sót preference.
+-            scorers = [
+-                (lambda last, p, d: d,                                                         "🏃 Gần nhất"),
+-                (lambda last, p, d: -(p.get("score") or 0),                                   "⭐ Nổi bật"),
+-                (lambda last, p, d: d * (1 - pref_weight) + _preference_penalty(p) * pref_weight, "🧭 Theo sở thích của bạn"),
+-                (lambda last, p, d: (d / ((p.get("score") or 1) + 1)) * (1 - pref_weight) + _preference_penalty(p) * pref_weight, "⚖️ Cân bằng"),
+-                (lambda last, p, d: d + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "🌈 Đa dạng"),
+-                (lambda last, p, d: -(p.get("score") or 0) + (80 if p.get("loai_hinh") == last.get("loai_hinh") else 0), "🎯 Giá trị & đa dạng"),
++                ("highlight", pool_value[: max(8, len(pool_value) // 2)],
++                 lambda last, p, d: -(p.get("score") or 0) + d * 0.1, 1.0),
+             ]
+ 
+-            # ── Ngân sách thời gian: tạo lộ trình theo nhiều độ dài ──
+-            # Tính số mốc thời gian dựa trên quỹ thực tế
+-            min_budget = 60  # ít nhất 1 giờ
+-            budget_ratios = [0.25, 0.35, 0.5, 0.65, 0.8, 1.0]
+-            time_budgets = []
+-            for ratio in budget_ratios:
++            for theme, pool, score_fn, ratio in strategies:
++                if not pool:
++                    continue
++                end_t = clock_start + timedelta(minutes=available_minutes * ratio)
++                label = ROUTE_THEMES.get(theme, {}).get("label", theme)
++                try_add(
++                    build_route_greedy_custom(origin, pool, k_weather, end_t, score_fn,
++                                              must_visit_ids=must_visit_ids),
++                    k_weather, label, theme
++                )
++
++            # ── BIẾN THỂ ĐỘ DÀI: cùng chủ đề nhưng quỹ thời gian khác nhau ──
++            # Cho người dùng lựa chọn "đi nhẹ nhàng nửa ngày" so với "đi trọn ngày".
++            for ratio in (0.5, 0.75):
+                 mins = available_minutes * ratio
+-                if mins >= min_budget:
+-                    end_t = clock_start + timedelta(minutes=mins)
+-                    hrs   = int(mins // 60)
+-                    mns   = int(mins % 60)
+-                    label_t = f"{hrs}h{mns:02d}" if hrs > 0 else f"{int(mins)}ph"
+-                    time_budgets.append((end_t, label_t, ratio))
+-
+-            # ── MA TRẬN: Mỗi ngân sách × Mỗi scorer ──
+-            for end_t, time_label, ratio in time_budgets:
+-                for score_fn, strat_name in scorers:
+-                    label = f"{strat_name} · {time_label}"
+-                    try_add(
+-                        build_route_greedy_custom(origin, base_unvisited, k_weather, end_t, score_fn,
+-                                                  must_visit_ids=ai_must_visit_ids),
+-                        k_weather, label
+-                    )
+-
+-                # Pool giới hạn chỉ áp dụng cho ngân sách ≥ 50%
+-                if ratio >= 0.5:
+-                    near_n = max(8, len(base_unvisited) // 3)
+-                    val_n  = max(8, len(base_unvisited) // 3)
+-                    try_add(build_route_greedy_custom(origin, pool_value[:val_n], k_weather, end_t,
+-                                                       lambda last, p, d: d,
+-                                                       must_visit_ids=ai_must_visit_ids), k_weather, f"🏆 Top điểm · {time_label}")
+-                    try_add(build_route_greedy_custom(origin, pool_near[:near_n], k_weather, end_t,
+-                                                       lambda last, p, d: -(p.get("score") or 0),
+-                                                       must_visit_ids=ai_must_visit_ids), k_weather, f"🗺️ Lân cận · {time_label}")
++                if mins < 60:
++                    continue
++                end_t = clock_start + timedelta(minutes=mins)
++                label = f"{ROUTE_THEMES['time_optimized']['label']} · {_fmt_minutes(mins)}"
++                try_add(
++                    build_route_greedy_custom(origin, base_unvisited, k_weather, end_t,
++                                              lambda last, p, d: d,
++                                              must_visit_ids=must_visit_ids),
++                    k_weather, label, "time_optimized"
++                )
++                label = f"{ROUTE_THEMES['relax']['label']} · {_fmt_minutes(mins)}"
++                try_add(
++                    build_route_greedy_custom(origin, pool_long, k_weather, end_t,
++                                              lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05,
++                                              must_visit_ids=must_visit_ids),
++                    k_weather, label, "relax"
++                )
+ 
+-            # ── Loại trừ điểm top → lộ trình thực sự khác biệt ──
+-            for skip in range(min(5, len(pool_value))):
++            # ── LOẠI TRỪ ĐIỂM TOP → ép ra tập địa điểm lệch hẳn ──
++            # Lưu ý: đây là biến thể TẠO SỰ ĐA DẠNG trong lúc sinh candidate,
++            # hoàn toàn khác với excluded_ids (ràng buộc của người dùng).
++            for skip in range(min(4, len(pool_value))):
+                 pool_excl = [p for p in base_unvisited if p["id"] != pool_value[skip]["id"]]
+                 try_add(
+                     build_route_greedy_custom(origin, pool_excl, k_weather, clock_end,
+                                               lambda last, p, d: d / ((p.get("score") or 1) + 1),
+-                                              must_visit_ids=ai_must_visit_ids),
+-                    k_weather, f"🔀 Thay thế #{skip+1}"
++                                              must_visit_ids=must_visit_ids),
++                    k_weather, f"{ROUTE_THEMES['exploration']['label']} #{skip + 1}", "exploration"
+                 )
+ 
+-            # ── Random sample nhiều seed ──
+-            for seed in [7, 13, 42, 77, 99, 111, 123, 200]:
++            # ── Random sample nhiều seed: mở rộng kho candidate cho bước chọn đa dạng ──
++            for seed in (7, 13, 42, 77, 99, 111):
+                 rng    = random.Random(seed)
+-                # Thay đổi kích thước sample theo seed để đa dạng hơn
+                 n      = max(6, int(len(base_unvisited) * (0.3 + (seed % 5) * 0.1)))
+                 n      = min(n, len(base_unvisited))
+                 sample = rng.sample(base_unvisited, n)
+                 try_add(
+                     build_route_greedy_custom(origin, sample, k_weather, clock_end,
+                                               lambda last, p, d: d / ((p.get("score") or 1) + 1),
+-                                              must_visit_ids=ai_must_visit_ids),
+-                    k_weather, f"🎲 Khám phá #{seed}"
++                                              must_visit_ids=must_visit_ids),
++                    k_weather, f"{ROUTE_THEMES['exploration']['label']} #{seed}", "exploration"
+                 )
+ 
+         return generated
+ 
+ 
+-
+     # ============================================================
+-    # NHÁNH AI-SELECTED (Task 2.3): nếu Frontend đã gọi /api/ai-suggest trước và
+-    # truyền ai_selected_ids lên đây, BỎ QUA toàn bộ bước tự sinh candidate bằng
+-    # scorer/greedy — chỉ còn nhiệm vụ sắp xếp lại thứ tự (2-opt/DP) + kiểm tra
+-    # giờ giấc cho đúng tập điểm AI đã chọn. Đây chính là yêu cầu "đôi chân thuật
+-    # toán vẫn phải sắp xếp lại để đi không bị vòng vèo, tính đúng giờ kẹt xe".
++    # MUST-VISIT (AI + itinerary hiện tại) — FILL-UP LOGIC (mục 5)
++    # ------------------------------------------------------------
++    # ai_selected_ids CHỈ LÀ ƯU TIÊN, không phải danh sách duy nhất. Cố ý KHÔNG
++    # ghi đè all_points bằng (starting_points + ai_points): làm thế sẽ cắt mất
++    # toàn bộ candidate còn lại và Greedy hết đường fill-up khi còn dư thời gian.
++    # Toàn bộ candidate pool (đã trừ excluded_ids) vẫn nằm trong all_points.
+     # ============================================================
+-    # ============================================================
+-    # NHÁNH AI-SELECTED (Task 2.3) — FILL-UP LOGIC
+-    # Giữ nguyên toàn bộ all_points từ DB để Greedy có thể bổ sung
+-    # điểm lân cận Rating cao lấp đầy quỹ thời gian trống.
+-    # Các điểm AI chọn được đánh dấu must-visit (ưu tiên tuyệt đối).
+-    # ============================================================
+-    ai_must_visit_ids = set()
+     if request.ai_selected_ids:
+-        id_to_point = {p["id"]: p for p in all_points}
+-        ai_points = [id_to_point[i] for i in request.ai_selected_ids if i in id_to_point]
+-        if not ai_points:
++        valid_ids = {p["id"] for p in all_points}
++        ai_ids = {str(i) for i in request.ai_selected_ids} & valid_ids
++        # Điểm AI gợi ý nhưng người dùng đã loại thì KHÔNG được quay lại (mục 8):
++        # excluded_ids đã bị loại khỏi all_points nên phép giao ở trên tự lọc sạch.
++        if not ai_ids and not must_visit_ids:
+             return {"status": "error", "message": "Không có ID điểm đến hợp lệ nào."}
+-        ai_must_visit_ids = {p["id"] for p in ai_points}
+-        # KHÔNG ghi đè all_points — giữ nguyên toàn bộ tập điểm từ DB
+-        # để thuật toán Greedy có thể fill-up thêm điểm lân cận Rating cao
+-
+-    # BUG 5 FIX (tiếp): trước đây hệ thống phải "thử lại" toàn bộ route generation
+-    # với k_density=1.0 nếu không sinh được route nào, vì hệ số congestion tĩnh có
+-    # thể chặn nhầm toàn bộ route hợp lệ. Giờ congestion được tính ĐỘNG theo từng
+-    # chặng/thời điểm thực tế nên không còn cần cơ chế thử-lại "giả định không tắc
+-    # đường" này nữa — chỉ cần sinh route một lần với dữ liệu thời gian thực.
++        must_visit_ids = (must_visit_ids | ai_ids) - excluded_ids
++
+     generated_routes = generate_routes_with_factor()
+ 
+     if len(generated_routes) == 0:
+-        return {"status": "error", "message": "Quỹ thời gian quá ngắn hoặc các địa điểm đều chưa mở cửa vào khung giờ này!"}
++        return {
++            "status": "error",
++            "message": "Quỹ thời gian quá ngắn hoặc các địa điểm đều chưa mở cửa vào khung giờ này!",
++            "excluded_ids": sorted(excluded_ids),
++        }
+ 
+-    # Sắp xếp lộ trình: nhiều điểm tham quan hơn trước, rồi thời gian ngắn hơn, rồi
+-    # (tie-breaker) route phù hợp sở thích người dùng hơn được ưu tiên hiển thị trước.
+-    generated_routes.sort(key=lambda r: (-len(r["optimized_route"]), r["total_time_minutes"], -r.get("avg_preference_score", 0.5)))
+-    # Giới hạn tối đa 5 lộ trình đa dạng nhất trả về cho Frontend
+-    generated_routes = generated_routes[:5]
+-    for i, r in enumerate(generated_routes):
+-        r["route_id"] = i + 1
+-        # Tên fallback "Lộ trình N" phải khớp route_id cuối cùng sau khi sắp xếp lại.
+-        if r.get("route_name", "").startswith("Lộ trình "):
+-            r["route_name"] = f"Lộ trình {i + 1}"
++    # ============================================================
++    # MODE "single": tính lại ĐÚNG MỘT lịch trình (mục 9)
++    # Dùng cho /api/itinerary/update sau khi người dùng xoá điểm. Chọn candidate
++    # giữ được nhiều điểm-phải-giữ nhất, rồi mới tới nhiều điểm / dùng hết quỹ
++    # thời gian. Điểm đã xoá không thể quay lại vì đã bị loại khỏi all_points.
++    # ============================================================
++    if mode == "single":
++        def _rank(r):
++            covered_force = len([p for p in r["optimized_route"] if p["id"] in force_visit_ids])
++            return (
++                covered_force,                      # điểm user vừa thêm phải vào được trước
++                r.get("must_visit_covered", 0),     # rồi mới tới giữ lại nhiều nhất
++                len(r["optimized_route"]),
++                -abs(available_minutes - r["total_time_minutes"]),
++            )
++
++        best = max(generated_routes, key=_rank)
++        itinerary = format_route_object(best, 1)
++        return {
++            "status": "success",
++            "available_minutes": available_minutes,
++            "trip_date": str(base_date),
++            "vehicle_type": request.vehicle_type,
++            "vehicle_note": vehicle_note,
++            "accessible_locations_count": len(all_points),
++            "user_preference": request.user_preference,
++            "weight": request.weight,
++            "excluded_ids": sorted(excluded_ids),
++            "itinerary": itinerary,
++            # Khoá cũ để app.js hiện tại render được ngay không cần sửa.
++            "routes": [itinerary],
++        }
++
++    # ============================================================
++    # MODE "multi": chọn 3–5 lộ trình KHÁC NHAU THỰC SỰ (mục 4)
++    # Không còn sort theo (-số điểm, thời gian) rồi cắt [:5] — cách đó luôn trả
++    # về 5 biến thể của cùng một lộ trình dài nhất.
++    # ============================================================
++    selected = select_diverse_routes(generated_routes, available_minutes, request.num_routes)
++    routes = _ensure_unique_names([format_route_object(r, i + 1) for i, r in enumerate(selected)])
+ 
+     return {
+         "status": "success",
+@@ -1096,9 +1477,267 @@
+         "accessible_locations_count": len(all_points),
+         "user_preference": request.user_preference,
+         "weight": request.weight,
+-        "routes": generated_routes
++        "excluded_ids": sorted(excluded_ids),
++        "candidates_generated": len(generated_routes),
++        "routes": routes,
++    }
++
++
++# ============================================================
++# API LỚP NGOÀI — mỗi endpoint chỉ là lớp mỏng bọc quanh run_route_generation()
++# và itinerary_store, để không có chỗ nào sinh lại route ngoài tầm kiểm soát.
++# ============================================================
++
++def _params_from_request(request: OptimizationRequest) -> dict:
++    """Tham số Screen 1 cần nhớ trong phiên để các bước sau tính lại đúng bối cảnh."""
++    return {
++        "region": request.region,
++        "start_time": request.start_time,
++        "end_time": request.end_time,
++        "trip_date": request.trip_date,
++        "start_point": request.start_point,
++        "start_lat": request.start_lat,
++        "start_lon": request.start_lon,
++        "vehicle_type": request.vehicle_type,
++        "user_preference": request.user_preference,
++        "weight": request.weight,
++        "ai_selected_ids": request.ai_selected_ids,
++    }
++
++
++def _request_from_session(session, overrides: dict = None) -> OptimizationRequest:
++    params = dict(session.params)
++    params.update(overrides or {})
++    params.pop("ai_selected_ids", None)
++    return OptimizationRequest(**{k: v for k, v in params.items() if v is not None})
++
++
++class RouteSelectRequest(BaseModel):
++    session_id: str
++    route_id: str
++
++
++class ItineraryUpdateRequest(BaseModel):
++    session_id: str
++    remove_ids: Optional[List[str]] = None    # Loại vĩnh viễn trong phiên (mục 6)
++    restore_ids: Optional[List[str]] = None   # Bỏ loại trừ khi người dùng đổi ý
++    add_ids: Optional[List[str]] = None       # Ghim thêm điểm (must-visit)
++
++
++def _ensure_unique_names(routes: list) -> list:
++    """
++    Screen 2 đặt 3–5 lộ trình cạnh nhau, nên hai route trùng tên là vô nghĩa với
++    người dùng dù tập điểm bên trong đã khác nhau. Khi trùng, lấy nhãn theme làm
++    yếu tố phân biệt (theme phản ánh đúng chiến lược đã sinh ra route đó).
++    """
++    seen = set()
++    for r in routes:
++        name = r.get("name") or r["route_id"]
++        if name in seen:
++            # Dùng thẳng nhãn theme làm tên — nó mô tả đúng chiến lược đã sinh ra
++            # route này, dễ hiểu hơn nhiều so với việc nối chuỗi hay đánh số.
++            label = ROUTE_THEMES.get(r.get("theme"), {}).get("label", "")
++            name = label or f"Lộ trình {r['route_id'].split('_')[-1]}"
++            n = 2
++            while name in seen:
++                name = f"{label} #{n}" if label else f"Lộ trình {n}"
++                n += 1
++            r["name"] = name
++            r["route_name"] = name
++        seen.add(name)
++    return routes
++
++
++@app.post("/api/optimize-route")
++async def optimize_route(request: OptimizationRequest):
++    """
++    ENDPOINT CŨ — GIỮ NGUYÊN HÀNH VI cho app.js hiện tại (mục 10: "tận dụng API
++    hiện tại nếu có", mục 13: không sửa frontend ngoài phạm vi cần thiết).
++
++    Khác biệt duy nhất: nếu request có session_id thì nó tôn trọng excluded_ids
++    của phiên — nghĩa là luồng chatbot "Bỏ A rồi thêm quán ăn trưa" của frontend
++    hiện tại cũng được sửa lỗi mà KHÔNG cần đổi một dòng nào ở app.js.
++    """
++    session = store.get_or_create(request.session_id, _params_from_request(request))
++    session.exclude(request.excluded_ids or [])
++
++    result = run_route_generation(
++        request,
++        excluded_ids=session.excluded_ids,
++        must_visit_ids=session.pinned_ids,
++        mode="multi",
++    )
++    result["session_id"] = session.session_id
++    if result.get("status") == "success":
++        session.set_routes(result["routes"])
++        # Route đầu tiên là cái Screen 3 hiển thị mặc định → cũng là itinerary hiện tại.
++        session.select_route(result["routes"][0]["route_id"])
++    return result
++
++
++@app.post("/api/routes")
++async def create_routes(request: OptimizationRequest):
++    """
++    SCREEN 1 → BACKEND → 3–5 ROUTE HOÀN CHỈNH (mục 2).
++
++    Trả về route ĐÃ HOÀN CHỈNH (places + timeline + tổng thời gian) để Screen 2
++    render thẳng, không còn cảnh Screen 2 nhận một rổ địa điểm rồi Screen 3 mới
++    tự tách route.
++    """
++    session = store.get_or_create(request.session_id, _params_from_request(request))
++    session.exclude(request.excluded_ids or [])
++
++    result = run_route_generation(
++        request,
++        excluded_ids=session.excluded_ids,
++        must_visit_ids=session.pinned_ids,
++        mode="multi",
++    )
++    if result.get("status") != "success":
++        result["session_id"] = session.session_id
++        return result
++
++    session.set_routes(result["routes"])
++    result["session_id"] = session.session_id
++    return result
++
++
++@app.get("/api/routes")
++async def list_routes(session_id: str):
++    """Lấy lại đúng tập route đã sinh. KHÔNG sinh lại (mục 10)."""
++    session = store.get(session_id)
++    if session is None:
++        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
++    return {
++        "status": "success",
++        "session_id": session.session_id,
++        "routes": session.list_routes(),
++        "selected_route_id": session.selected_route_id,
++        "excluded_ids": sorted(session.excluded_ids),
+     }
+ 
++
++@app.post("/api/routes/select")
++async def select_route(req: RouteSelectRequest):
++    """
++    SCREEN 2 CHỌN ROUTE → SCREEN 3 (mục 10).
++
++    Chọn route_3 thì trả về ĐÚNG route_3 đã lưu — không chạy lại thuật toán,
++    nên Screen 3 không bao giờ hiển thị một lộ trình khác với cái người dùng
++    vừa nhìn thấy ở Screen 2.
++    """
++    session = store.get(req.session_id)
++    if session is None:
++        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
++    route = session.select_route(req.route_id)
++    if route is None:
++        raise HTTPException(
++            status_code=404,
++            detail=f"Không tìm thấy {req.route_id} trong phiên này. Các route hiện có: {list(session.route_order)}",
++        )
++    return {
++        "status": "success",
++        "session_id": session.session_id,
++        "route_id": route["route_id"],
++        "itinerary": route,
++        "excluded_ids": sorted(session.excluded_ids),
++        "routes": [route],
++    }
++
++
++@app.get("/api/itinerary")
++async def get_itinerary(session_id: str):
++    """
++    SOURCE OF TRUTH (mục 11): map data, timeline, route summary, AI context đều
++    lấy từ đây nên không thể xảy ra cảnh Map = route A còn Timeline = route B.
++    """
++    session = store.get(session_id)
++    if session is None:
++        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
++    itinerary = session.current_itinerary
++    return {
++        "status": "success",
++        "session_id": session.session_id,
++        "selected_route_id": session.selected_route_id,
++        "itinerary": itinerary,
++        "map_data": [
++            {
++                "id": p["id"], "ten": p["ten"], "lat": p["lat"], "lon": p["lon"],
++                "loai_hinh": p.get("loai_hinh", ""), "arrive_time": p.get("arrive_time"),
++                "depart_time": p.get("depart_time"),
++            }
++            for p in (itinerary or {}).get("places", [])
++        ],
++        "timeline": (itinerary or {}).get("timeline", []),
++        "summary": {
++            "name": (itinerary or {}).get("name"),
++            "theme": (itinerary or {}).get("theme"),
++            "total_duration": (itinerary or {}).get("total_duration"),
++            "travel_time": (itinerary or {}).get("travel_time"),
++            "visit_time": (itinerary or {}).get("visit_time"),
++            "place_count": (itinerary or {}).get("place_count"),
++        },
++        "ai_context_ids": session.current_place_ids(),
++        "excluded_ids": sorted(session.excluded_ids),
++        "pinned_ids": sorted(session.pinned_ids),
++    }
++
++
++@app.post("/api/itinerary/update")
++async def update_itinerary(req: ItineraryUpdateRequest):
++    """
++    XOÁ ĐIỂM / THÊM ĐIỂM RỒI TÍNH LẠI (mục 8, 9).
++
++    A → B → C → D → E, xoá C thì kết quả là A → B → D → E (hoặc A → B → X → D → E
++    nếu Greedy fill-up được điểm mới) — nhưng C không bao giờ quay lại, kể cả ở
++    những lần cập nhật sau như "thêm quán ăn trưa", vì C nằm trong excluded_ids
++    của phiên chứ không phải chỉ bị bỏ khỏi một mảng tạm.
++    """
++    session = store.get(req.session_id)
++    if session is None:
++        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
++
++    session.restore(req.restore_ids or [])
++    newly_excluded = session.exclude(req.remove_ids or [])
++
++    # Giữ lại các điểm đang có trong itinerary (trừ điểm vừa xoá) làm must-visit.
++    forced = {str(i) for i in (req.add_ids or [])} - session.excluded_ids
++    keep = set(session.current_place_ids()) - session.excluded_ids
++    keep |= forced
++    session.pinned_ids = keep
++
++    opt_request = _request_from_session(session)
++    result = run_route_generation(
++        opt_request,
++        excluded_ids=session.excluded_ids,
++        must_visit_ids=keep,
++        force_visit_ids=forced,
++        mode="single",
++    )
++    if result.get("status") != "success":
++        result["session_id"] = session.session_id
++        result["excluded_ids"] = sorted(session.excluded_ids)
++        return result
++
++    session.set_current_itinerary(result["itinerary"])
++    result.update({
++        "session_id": session.session_id,
++        "removed_ids": newly_excluded,
++        "excluded_ids": sorted(session.excluded_ids),
++        "selected_route_id": session.selected_route_id,
++    })
++    return result
++
++
++@app.get("/api/session")
++async def get_session_state(session_id: str):
++    """Trạng thái thô của phiên — hữu ích cho debug và cho test tự động."""
++    session = store.get(session_id)
++    if session is None:
++        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
++    return {"status": "success", **session.snapshot()}
++
++
+ @app.post("/api/admin/import-excel")
+ async def import_excel_tool(file: UploadFile = File(...)):
+     try:
+########## ai_advisor.py ##########
+--- repo/ai_advisor.py	2026-09-17 16:33:30.474072194 +0000
++++ work/ai_advisor.py	2026-09-17 16:47:33.520240070 +0000
+@@ -39,6 +39,7 @@
+     start_time: str 
+     end_time: str 
+     model: Optional[str] = None
++    session_id: Optional[str] = None   # Nếu có, AI không được gợi ý điểm đã bị loại
+ 
+ 
+ class TimelinePlace(BaseModel):
+@@ -74,12 +75,41 @@
+     current_ids: List[str]
+     instruction: str
+     model: Optional[str] = None
++    session_id: Optional[str] = None   # Để ghi excluded_ids vào state backend (mục 6)
+ 
+ 
+ class AIRefineResponse(BaseModel):
+     advice_text: str
+     suggested_ids: List[str]
+     invalid_ids: List[str] = []
++    removed_ids: List[str] = []        # Điểm vừa bị loại trong lượt này
++    excluded_ids: List[str] = []       # Toàn bộ ràng buộc loại trừ của phiên
++    session_id: Optional[str] = None
++
++
++# ============================================================
++# NHẬN DIỆN Ý ĐỊNH "BỎ ĐIỂM" (mục 6)
++# ------------------------------------------------------------
++# Chỉ ghi vào excluded_ids khi người dùng THỰC SỰ muốn bỏ điểm. Model 1B chạy
++# local thỉnh thoảng trả thiếu id do lỗi parse; nếu cứ thấy danh sách ngắn đi là
++# loại vĩnh viễn thì một lần AI lỗi sẽ khoá luôn địa điểm đó khỏi cả phiên.
++# Có ý định bỏ  → ghi excluded_ids (ràng buộc cứng, không quay lại).
++# Không có      → chỉ cập nhật itinerary lượt này, không khoá gì cả.
++# Đường đi chắc chắn nhất vẫn là /api/itinerary/update với remove_ids tường minh.
++# ============================================================
++_REMOVE_INTENT_KEYWORDS = (
++    "bo ", "bot", "xoa", "loai", "khong thich", "khong muon", "thay ",
++    "doi ", "huy", "remove", "delete", "drop", "bo di", "chan",
++)
++
++
++def _has_remove_intent(instruction: str) -> bool:
++    try:
++        from main import _strip_diacritics
++        text = _strip_diacritics(instruction or "")
++    except Exception:
++        text = (instruction or "").lower()
++    return any(kw in text for kw in _REMOVE_INTENT_KEYWORDS)
+ 
+ 
+ def _line_for_point(p: dict) -> str:
+@@ -381,6 +411,13 @@
+     # Lấy dữ liệu và chọn candidate theo mức độ liên quan (không còn cắt cứng [:15])
+     all_points = fetch_all_points(vehicle_type=req.vehicle_type)
+ 
++    # Tôn trọng ràng buộc loại trừ của phiên (nếu người dùng quay lại Screen 1
++    # sau khi đã bỏ vài điểm, AI không được gợi ý lại đúng những điểm đó).
++    from itinerary_store import store
++    session = store.get(req.session_id)
++    if session is not None and session.excluded_ids:
++        all_points = [p for p in all_points if p["id"] not in session.excluded_ids]
++
+     if not all_points:
+         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
+ 
+@@ -412,6 +449,7 @@
+     ai_selected_ids = suggested_ids để tính lại route/timeline/map — tái sử
+     dụng đúng luồng fill-up Greedy đã có, không cần thuật toán tối ưu riêng."""
+     from main import fetch_all_points
++    from itinerary_store import store
+ 
+     try:
+         fmt = "%H:%M"
+@@ -423,10 +461,19 @@
+     except Exception:
+         pass
+ 
++    session = store.get(req.session_id)
++    excluded = set(session.excluded_ids) if session else set()
++
+     all_points = fetch_all_points(vehicle_type=req.vehicle_type)
+     if not all_points:
+         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
+ 
++    # Điểm đã bị loại KHÔNG được đưa vào context của AI (mục 8): nếu vẫn để AI
++    # nhìn thấy, chỉ cần người dùng nói "thêm quán ăn trưa" là nó gợi ý lại đúng
++    # cái quán vừa bị bỏ, và điểm đó lại xuất hiện trên bản đồ.
++    if excluded:
++        all_points = [p for p in all_points if p["id"] not in excluded]
++
+     id_to_point = {p["id"]: p for p in all_points}
+     current_points = [id_to_point[i] for i in req.current_ids if i in id_to_point]
+ 
+@@ -448,8 +495,28 @@
+     valid_ids_set = {p["id"] for p in context_points}
+     advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set)
+ 
++    # Chốt chặn cuối: dù prompt có dặn thế nào, id đã bị loại vẫn không được lọt
++    # ra ngoài — excluded_ids là ràng buộc của hệ thống, không phải gợi ý cho AI.
++    suggested_ids = [i for i in suggested_ids if i not in excluded]
++
++    # ── GHI Ý ĐỊNH "BỎ ĐIỂM" VÀO STATE BACKEND (mục 6, 8) ──
++    # Đây là mắt xích từng bị đứt: trước đây việc bỏ điểm chỉ thể hiện bằng một
++    # danh sách ngắn hơn trả về cho frontend, không có ai ghi nhớ, nên Greedy
++    # ở lần tính kế tiếp nhặt lại điểm đó từ DB.
++    removed_ids = []
++    if session is not None:
++        dropped = [i for i in req.current_ids if i not in suggested_ids and i not in excluded]
++        if dropped and _has_remove_intent(req.instruction):
++            removed_ids = session.exclude(dropped)
++        # Điểm AI giữ lại/thêm mới trở thành must-visit cho lần tính lộ trình sau.
++        session.pin(suggested_ids)
++        excluded = set(session.excluded_ids)
++
+     return AIRefineResponse(
+         advice_text=advice_text,
+         suggested_ids=suggested_ids,
+         invalid_ids=invalid_ids,
++        removed_ids=removed_ids,
++        excluded_ids=sorted(excluded),
++        session_id=req.session_id,
+     )
+\ No newline at end of file
+########## app.js ##########
+--- repo/app.js	2026-09-17 16:33:30.474072194 +0000
++++ work/app.js	2026-09-18 03:17:14.818693407 +0000
+@@ -3,19 +3,30 @@
+     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+ 
+     let mapMarkers = [], polylineRoutes = [];
+-    let dbLocations = [];
+ 
+     // ============================================================
+-    // STATE MANAGEMENT (mục XVII yêu cầu): một nguồn state duy nhất được
+-    // giữ xuyên suốt Screen 1 → 2 → 3, để quay lại/màn AI trên map luôn có
+-    // đủ ngữ cảnh (ngày, giờ, phương tiện, sở thích, itinerary hiện tại...).
++    // STATE MANAGEMENT: một nguồn state duy nhất được giữ xuyên suốt
++    // Screen 1 → 2 → 3 → chatbot trên bản đồ.
++    //
++    // sessionId: khớp với itinerary_store.TripSession phía backend — đây là
++    // "sợi dây" nối app.js với state loại trừ (excluded_ids) ở backend. Thiếu
++    // trường này thì mọi ràng buộc "đã bỏ điểm X" chỉ sống được trong MỘT lần
++    // gọi API rồi mất, nên nó được gắn vào mọi request kể từ khi được cấp.
++    // baseParams: tham số Screen 1 (đã geocode xong điểm xuất phát), dùng lại
++    // cho mọi lần /api/routes tiếp theo (quick action, "Nghĩ lộ trình khác")
++    // mà không phải geocode lại.
++    // currentRoutes: nguyên văn response gần nhất của /api/routes — Screen 3
++    // dùng lại để vẽ tab, KHÔNG gọi lại thuật toán khi chuyển tab.
+     // ============================================================
+     const tripState = {
+         currentLocationData: null,
++        sessionId: null,
++        startFingerprint: null,
++        baseParams: null,
+         aiSuggestedIds: [],
+         currentRoutes: null,
++        selectedRouteId: null,
+         activeRouteIndex: 0,
+-        lastOptimizePayload: null,
+     };
+ 
+     const today = new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+@@ -27,8 +38,6 @@
+         $('.admin-trigger').removeClass('d-none');
+     }
+ 
+-    $.get('http://127.0.0.1:8000/api/locations', res => { if (res.status === "success") dbLocations = res.data; });
+-
+     const CATEGORY_ICON = {
+         "Cafe":       { icon: "fa-mug-saucer",   color: "#8B5E3C" },
+         "Ăn uống":    { icon: "fa-utensils",     color: "#E67E22" },
+@@ -51,6 +60,13 @@
+         return `🏍️ Di chuyển khoảng ${distStr} km bằng xe máy, mất khoảng ${minsStr} phút.`;
+     }
+ 
++    function durationLabel(mins) {
++        mins = Math.round(mins || 0);
++        const h = Math.floor(mins / 60), m = mins % 60;
++        if (h <= 0) return `${m} phút`;
++        return m > 0 ? `${h}h${m}` : `${h}h`;
++    }
++
+     // ============================================================
+     // SCREEN 1 → INPUT
+     // ============================================================
+@@ -70,28 +86,113 @@
+     $('#start_point').on('input', function() { tripState.currentLocationData = null; $('#location-status').empty(); });
+ 
+     // ============================================================
+-    // AI SUGGEST (Screen 1 → Screen 2)
+-    // "Nghĩ lộ trình khác" dùng chung handler nhưng phải tự tạo trạng thái
+-    // loading NGAY LẬP TỨC và khoá cả hai nút để tránh double-click trong
+-    // lúc chờ phản hồi (mục IX).
++    // ĐIỂM XUẤT PHÁT → toạ độ thật (mục 2)
++    // ------------------------------------------------------------
++    // Backend cần start_lat/start_lon THẬT để Greedy tính khoảng cách, nên
++    // việc geocode phải xong TRƯỚC KHI sinh route — tức trước khi Screen 2
++    // hiển thị, không phải ở nút "Chốt lộ trình" như luồng cũ. `startFingerprint`
++    // nhớ lại lần geocode gần nhất để "Nghĩ lộ trình khác"/quick action không
++    // gọi lại Nominatim một cách vô ích khi người dùng chưa đổi điểm xuất phát.
+     // ============================================================
+-    function renderAdviceAndPlaces(res) {
++    function resolveStartAndRun(onReady) {
++        const startPointText = $('#start_point').val().trim();
++        const usingGPS = !!tripState.currentLocationData;
++        const fingerprint = usingGPS
++            ? `gps:${tripState.currentLocationData.lat},${tripState.currentLocationData.lon}`
++            : `text:${startPointText}`;
++
++        if (tripState.baseParams && tripState.startFingerprint === fingerprint) {
++            onReady({
++                start_lat: tripState.baseParams.start_lat,
++                start_lon: tripState.baseParams.start_lon,
++                start_point: tripState.baseParams.start_point,
++            });
++            return;
++        }
++
++        if (usingGPS) {
++            tripState.startFingerprint = fingerprint;
++            onReady({ start_lat: tripState.currentLocationData.lat, start_lon: tripState.currentLocationData.lon, start_point: '' });
++            return;
++        }
++
++        $.get('https://nominatim.openstreetmap.org/search', { q: startPointText + ', Việt Nam', format: 'json', limit: 1 })
++            .done(res => {
++                tripState.startFingerprint = fingerprint;
++                if (res && res.length > 0) onReady({ start_lat: parseFloat(res[0].lat), start_lon: parseFloat(res[0].lon), start_point: '' });
++                else onReady({ start_point: startPointText });
++            })
++            .fail(() => { tripState.startFingerprint = fingerprint; onReady({ start_point: startPointText }); });
++    }
++
++    // ============================================================
++    // AI ADVICE (advice_text + wishlist ưu tiên) — CHƯA phải route
++    // ============================================================
++    function applyAdvice(res) {
++        tripState.sessionId = res.session_id || tripState.sessionId;
+         tripState.aiSuggestedIds = res.suggested_ids || [];
+-        $('#hero-section, #map-section').hide();
+-        $('#chat-section').fadeIn();
+         $('#ai-advice-content').html((res.advice_text || '').replace(/\n/g, '<br>'));
+         renderQuickActions();
+-        renderPlacesCarousel();
+     }
+ 
+-    function renderPlacesCarousel() {
+-        const $grid = $('#ai-places-grid').empty();
+-        tripState.aiSuggestedIds.forEach(id => {
+-            const place = dbLocations.find(p => p.id === id);
+-            if (!place) return;
+-            const img = place.url_hinh_anh || "https://images.unsplash.com/photo-1511884642898-4c92249e20b6?auto=format&fit=crop&w=500&q=80";
+-            const rating = place.rating ? `${place.rating} ⭐` : 'Mới';
+-            $grid.append(`<div class="place-card"><div class="rating-badge">${rating}</div><img src="${img}"><div class="p-3"><h6 class="fw-bold mb-1">${place.ten}</h6><small class="text-muted"><i class="fa-solid fa-tag"></i> ${place.loai_hinh}</small></div></div>`);
++    // ============================================================
++    // SINH / LÀM MỚI 3–5 ROUTE (mục 2, mục 3)
++    // ------------------------------------------------------------
++    // Gọi /api/routes — trả route ĐÃ HOÀN CHỈNH (places + timeline có sẵn),
++    // dùng chung cho: lần đầu vào Screen 2, "Nghĩ lộ trình khác", và mọi quick
++    // action (vì các action đó đổi wishlist → 3–5 route phải phản ánh lại).
++    // Route đang được chọn được giữ nguyên lựa chọn nếu vẫn còn trong danh
++    // sách mới; nếu không còn thì mặc định chọn route đầu tiên.
++    // ============================================================
++    function fetchRoutes(onComplete) {
++        const payload = Object.assign({}, tripState.baseParams, {
++            session_id: tripState.sessionId,
++            ai_selected_ids: tripState.aiSuggestedIds,
++            num_routes: 5,
++        });
++        $.ajax({
++            url: 'http://127.0.0.1:8000/api/routes', method: 'POST',
++            contentType: 'application/json', data: JSON.stringify(payload),
++            success: function (res) {
++                if (res.status !== 'success') {
++                    alert(res.message || 'Không tạo được lộ trình phù hợp, hãy thử mô tả khác.');
++                    return;
++                }
++                tripState.sessionId = res.session_id || tripState.sessionId;
++                tripState.currentRoutes = res;
++                const kept = res.routes.find(r => r.route_id === tripState.selectedRouteId);
++                tripState.selectedRouteId = (kept || res.routes[0] || {}).route_id || null;
++                renderRouteCards(res.routes);
++
++                if (!$('#chat-section').is(':visible')) {
++                    $('#hero-section, #map-section').hide();
++                    $('#chat-section').fadeIn();
++                }
++            },
++            error: (xhr) => alert("Không tạo được lộ trình: " + (xhr.responseJSON?.detail || "Kiểm tra Backend.")),
++            complete: () => { if (onComplete) onComplete(); }
++        });
++    }
++
++    function renderRouteCards(routes) {
++        const $grid = $('#ai-routes-grid').empty();
++        routes.forEach(r => {
++            const isSelected = r.route_id === tripState.selectedRouteId;
++            const $card = $('<div class="route-card"></div>')
++                .toggleClass('selected', isSelected)
++                .attr('data-route-id', r.route_id)
++                .html(`
++                    <div class="route-card-theme">${r.theme_label || ''}</div>
++                    <h6 class="fw-bold mb-1">${r.name || r.route_id}</h6>
++                    <p class="route-card-desc">${r.description || ''}</p>
++                    <div class="route-card-stats"><i class="fa-regular fa-clock"></i> ${r.place_count || (r.places || []).length} điểm · ${durationLabel(r.total_duration)}</div>
++                `);
++            $card.on('click', function () {
++                tripState.selectedRouteId = r.route_id;
++                $('#ai-routes-grid .route-card').removeClass('selected');
++                $(this).addClass('selected');
++            });
++            $grid.append($card);
+         });
+     }
+ 
+@@ -121,23 +222,36 @@
+             user_preference: $('#user_preference').val(),
+             current_ids: tripState.aiSuggestedIds,
+             instruction: instructionText,
++            session_id: tripState.sessionId,
+         };
+         $.ajax({
+             url: 'http://127.0.0.1:8000/api/ai-refine', method: 'POST',
+             contentType: 'application/json', data: JSON.stringify(payload),
+             success: function (res) {
++                tripState.sessionId = res.session_id || tripState.sessionId;
+                 tripState.aiSuggestedIds = res.suggested_ids || tripState.aiSuggestedIds;
+                 $('#ai-advice-content').html((res.advice_text || '').replace(/\n/g, '<br>'));
+-                renderPlacesCarousel();
++                // Wishlist vừa đổi → 3–5 route phải được tính lại để phản ánh đúng
++                // (mục 2: route luôn phải là bản hoàn chỉnh, không phải rổ điểm cũ).
++                fetchRoutes(() => $('#ai-quick-actions .quick-action-chip').prop('disabled', false));
+             },
+-            error: (xhr) => alert("Không cập nhật được gợi ý: " + (xhr.responseJSON?.detail || "Kiểm tra Backend.")),
+-            complete: () => $('#ai-quick-actions .quick-action-chip').prop('disabled', false)
++            error: (xhr) => {
++                alert("Không cập nhật được gợi ý: " + (xhr.responseJSON?.detail || "Kiểm tra Backend."));
++                $('#ai-quick-actions .quick-action-chip').prop('disabled', false);
++            }
+         });
+     }
+ 
++    // ============================================================
++    // SCREEN 1 → SCREEN 2: sinh advice + 3–5 route HOÀN CHỈNH trước khi hiện
++    // Screen 2 (mục 2). "Nghĩ lộ trình khác" dùng chung handler này.
++    // ============================================================
+     $('#btn-ask-ai, #btn-reject-route').click(function () {
+         const userPref = $('#user_preference').val().trim();
+         if (!userPref) { alert("Hãy nhập mong muốn của bạn!"); $('#user_preference').focus(); return; }
++        if (!tripState.currentLocationData && !$('#start_point').val().trim()) {
++            alert('Vui lòng nhập điểm xuất phát!'); return;
++        }
+ 
+         const $askBtn = $('#btn-ask-ai');
+         const $rejectBtn = $('#btn-reject-route');
+@@ -146,26 +260,47 @@
+         // Khoá NGAY cả hai nút + đổi text để có phản hồi tức thì, tránh việc
+         // click liên tục "Nghĩ lộ trình khác" tạo nhiều request chồng chéo.
+         $askBtn.add($rejectBtn).prop('disabled', true);
+-        if (isReject) {
+-            $rejectBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tìm lộ trình mới...');
+-        } else {
+-            $askBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang suy nghĩ...');
+-        }
++        if (isReject) $rejectBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tìm lộ trình mới...');
++        else $askBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang suy nghĩ...');
++
++        const resetButtons = () => {
++            $askBtn.html('<i class="fa-solid fa-wand-magic-sparkles me-2"></i> Cùng lên kế hoạch nào').prop('disabled', false);
++            $rejectBtn.html('<i class="fa-solid fa-rotate-right"></i> Nghĩ lộ trình khác').prop('disabled', false);
++        };
+ 
+-        const payload = { region: 'Hanoi', user_preference: userPref, vehicle_type: $('#vehicle_type').val(), start_time: $('#start_time').val(), end_time: $('#end_time').val() };
++        resolveStartAndRun(function (startParams) {
++            tripState.baseParams = {
++                region: 'Hanoi',
++                start_time: $('#start_time').val(),
++                end_time: $('#end_time').val(),
++                trip_date: $('#trip_date').val(),
++                vehicle_type: $('#vehicle_type').val(),
++                user_preference: userPref,
++                weight: 50,
++                start_lat: startParams.start_lat,
++                start_lon: startParams.start_lon,
++                start_point: startParams.start_point || '',
++            };
+ 
+-        $.ajax({
+-            url: 'http://127.0.0.1:8000/api/ai-suggest', method: 'POST',
+-            contentType: 'application/json', data: JSON.stringify(payload),
+-            success: function (res) { renderAdviceAndPlaces(res); },
+-            error: (xhr) => {
+-                const msg = xhr.responseJSON?.detail || "Không thể kết nối tới hệ thống, vui lòng thử lại.";
+-                alert("Chưa nghĩ ra được lộ trình: " + msg);
+-            },
+-            complete: () => {
+-                $askBtn.html('<i class="fa-solid fa-wand-magic-sparkles me-2"></i> Cùng lên kế hoạch nào').prop('disabled', false);
+-                $rejectBtn.html('<i class="fa-solid fa-rotate-right"></i> Nghĩ lộ trình khác').prop('disabled', false);
+-            }
++            $.ajax({
++                url: 'http://127.0.0.1:8000/api/ai-suggest', method: 'POST',
++                contentType: 'application/json',
++                data: JSON.stringify({
++                    region: 'Hanoi', user_preference: userPref,
++                    vehicle_type: tripState.baseParams.vehicle_type,
++                    start_time: tripState.baseParams.start_time,
++                    end_time: tripState.baseParams.end_time,
++                    session_id: tripState.sessionId,
++                }),
++                success: function (res) {
++                    applyAdvice(res);
++                    fetchRoutes(resetButtons);
++                },
++                error: function (xhr) {
++                    alert("Chưa nghĩ ra được lộ trình: " + (xhr.responseJSON?.detail || "Không thể kết nối tới hệ thống, vui lòng thử lại."));
++                    resetButtons();
++                }
++            });
+         });
+     });
+ 
+@@ -178,67 +313,70 @@
+     });
+ 
+     // ============================================================
+-    // CHỐT LỘ TRÌNH (Screen 2 → Screen 3)
+-    // ============================================================
+-    $('#btn-accept-route').click(function() {
+-        const startPointText = $('#start_point').val().trim();
+-        if (!tripState.currentLocationData && !startPointText) return alert('Vui lòng nhập điểm xuất phát!');
+-
+-        $(this).html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tính toán...').prop('disabled', true);
+-        const payload = {
+-            region: 'Hanoi', start_time: $('#start_time').val(), end_time: $('#end_time').val(),
+-            trip_date: $('#trip_date').val(), vehicle_type: $('#vehicle_type').val(),
+-            user_preference: $('#user_preference').val(), weight: 50, ai_selected_ids: tripState.aiSuggestedIds
+-        };
+-
+-        const executeOptimize = (data) => {
+-            tripState.lastOptimizePayload = data;
+-            $.ajax({
+-                url: 'http://127.0.0.1:8000/api/optimize-route', method: 'POST',
+-                contentType: 'application/json', data: JSON.stringify(data),
+-                success: function (res) {
+-                    if (res.status === "success") {
+-                        applyOptimizeResult(res, data);
+-                    } else alert(res.message);
+-                },
+-                error: (xhr) => alert("Lỗi Thuật toán: " + (xhr.responseJSON?.detail || "Kiểm tra Backend")),
+-                complete: () => $('#btn-accept-route').html('<i class="fa-solid fa-check me-2"></i> Chốt lộ trình & Vẽ bản đồ').prop('disabled', false)
+-            });
+-        };
+-
+-        if (tripState.currentLocationData) {
+-            payload.start_lat = tripState.currentLocationData.lat; payload.start_lon = tripState.currentLocationData.lon; payload.start_point = '';
+-            executeOptimize(payload);
+-        } else {
+-            $.get('https://nominatim.openstreetmap.org/search', { q: startPointText + ', Việt Nam', format: 'json', limit: 1 }, res => {
+-                if (res && res.length > 0) { payload.start_lat = parseFloat(res[0].lat); payload.start_lon = parseFloat(res[0].lon); payload.start_point = ''; }
+-                else payload.start_point = startPointText;
+-                executeOptimize(payload);
+-            }).fail(() => { payload.start_point = startPointText; executeOptimize(payload); });
++    // SCREEN 2 CHỌN ROUTE → SCREEN 3 (mục 10)
++    // ------------------------------------------------------------
++    // Route đã tồn tại sẵn từ fetchRoutes() ở bước trước. "Chốt lộ trình" chỉ
++    // xác nhận lựa chọn qua /api/routes/select — KHÔNG generate lại route mới.
++    // ============================================================
++    $('#btn-accept-route').click(function () {
++        if (!tripState.currentRoutes || !tripState.selectedRouteId) {
++            alert('Chưa có lộ trình nào để chốt, vui lòng thử lại.');
++            return;
+         }
++        const $btn = $(this);
++        $btn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tính toán...').prop('disabled', true);
++
++        $.ajax({
++            url: 'http://127.0.0.1:8000/api/routes/select', method: 'POST',
++            contentType: 'application/json',
++            data: JSON.stringify({ session_id: tripState.sessionId, route_id: tripState.selectedRouteId }),
++            success: function (res) {
++                if (res.status === 'success') enterMapScreen(res.route_id);
++                else alert(res.detail || 'Không chốt được lộ trình.');
++            },
++            error: (xhr) => alert("Lỗi khi chốt lộ trình: " + (xhr.responseJSON?.detail || "Kiểm tra Backend")),
++            complete: () => $btn.html('<i class="fa-solid fa-check me-2"></i> Chốt lộ trình & Vẽ bản đồ').prop('disabled', false)
++        });
+     });
+ 
+-    function applyOptimizeResult(res, data) {
+-        tripState.currentRoutes = res;
+-        tripState.activeRouteIndex = 0;
++    function enterMapScreen(routeId) {
++        const routes = tripState.currentRoutes.routes;
++        let idx = routes.findIndex(r => r.route_id === routeId);
++        if (idx < 0) idx = 0;
++        tripState.activeRouteIndex = idx;
++        tripState.selectedRouteId = routes[idx].route_id;
+ 
+         $('#chat-section').hide(); $('#map-section').fadeIn();
+         setTimeout(() => map.invalidateSize(), 100);
+ 
+         $('#route-tabs-container').remove();
+         let tabsHtml = '<div id="route-tabs-container" class="d-flex gap-2 mb-3 overflow-auto pb-2">';
+-        res.routes.forEach((r, i) => { tabsHtml += `<button class="btn btn-sm ${i===0 ? 'btn-dark' : 'btn-outline-dark'} fw-bold text-nowrap route-tab" data-idx="${i}">${r.strategy || 'Lộ trình ' + (i+1)}</button>`; });
++        routes.forEach((r, i) => {
++            const label = r.name || r.strategy || ('Lộ trình ' + (i + 1));
++            tabsHtml += `<button class="btn btn-sm ${i === idx ? 'btn-dark' : 'btn-outline-dark'} fw-bold text-nowrap route-tab" data-idx="${i}">${label}</button>`;
++        });
+         tabsHtml += '</div>';
+         $('#metrics-info').before(tabsHtml);
+ 
+-        $('.route-tab').click(function() {
++        $('.route-tab').click(function () {
++            const newIdx = $(this).data('idx');
+             $('.route-tab').removeClass('btn-dark').addClass('btn-outline-dark');
+             $(this).removeClass('btn-outline-dark').addClass('btn-dark');
+-            tripState.activeRouteIndex = $(this).data('idx');
+-            renderTimelineAndMap(res.routes[tripState.activeRouteIndex], data.vehicle_type, res.available_minutes);
++            tripState.activeRouteIndex = newIdx;
++            tripState.selectedRouteId = routes[newIdx].route_id;
++            renderTimelineAndMap(routes[newIdx], $('#vehicle_type').val(), tripState.currentRoutes.available_minutes);
++
++            // Đồng bộ lựa chọn với backend (mục 11: source of truth) để lần chat
++            // AI kế tiếp trên bản đồ thao tác đúng route đang xem. Không chặn UI
++            // khi chờ phản hồi — bảng đã được vẽ lại ở dòng trên rồi.
++            $.ajax({
++                url: 'http://127.0.0.1:8000/api/routes/select', method: 'POST',
++                contentType: 'application/json',
++                data: JSON.stringify({ session_id: tripState.sessionId, route_id: routes[newIdx].route_id }),
++            });
+         });
+ 
+-        renderTimelineAndMap(res.routes[0], data.vehicle_type, res.available_minutes);
++        renderTimelineAndMap(routes[idx], $('#vehicle_type').val(), tripState.currentRoutes.available_minutes);
+     }
+ 
+     function renderTimelineAndMap(routeData, vType, totalMins) {
+@@ -254,7 +392,7 @@
+         routeData.optimized_route.forEach((loc, idx) => {
+             const hasNext = idx < routeData.optimized_route.length - 1;
+             // Câu chữ di chuyển thân thiện, lấy đúng phương tiện thực tế từ itinerary
+-            // thay vì hard-code "đi bộ" cho mọi trường hợp (mục XIV).
++            // thay vì hard-code "đi bộ" cho mọi trường hợp.
+             const travelInfo = hasNext
+                 ? `<div class="mt-2 small fw-bold text-muted">${vehicleSentence(vType, loc.distance_to_next, loc.travel_to_next)}</div>`
+                 : '';
+@@ -275,7 +413,7 @@
+ 
+         routeLocs.forEach((loc, idx) => {
+             // Marker phân biệt theo category thực tế (loai_hinh) thay vì chỉ là số
+-            // đen trắng (mục XII); số thứ tự vẫn có trong popup + timeline sidebar.
++            // đen trắng; số thứ tự vẫn có trong popup + timeline sidebar.
+             const style = categoryStyle(loc.loai_hinh);
+             const iconHtml = `<div class="map-marker-icon" style="background:${style.color};"><i class="fa-solid ${style.icon}"></i></div>`;
+             const review = (loc.review || '').trim();
+@@ -303,8 +441,8 @@
+     $('#btn-back-chat').click(function() { $('#map-section').hide(); $('#chat-section').fadeIn(); });
+ 
+     // ============================================================
+-    // AI FAB TRÊN MAP (mục XV/XVI): bản đồ không còn là dead-end — người
+-    // dùng có thể tiếp tục trò chuyện để chỉnh sửa itinerary tại chỗ.
++    // AI FAB TRÊN MAP: bản đồ không còn là dead-end — người dùng có thể tiếp
++    // tục trò chuyện để chỉnh sửa itinerary tại chỗ.
+     // ============================================================
+     $('#btn-ai-fab').click(function () { $('#ai-map-chat').addClass('open'); $('#ai_map_instruction').focus(); });
+     $('#btn-close-ai-chat').click(function () { $('#ai-map-chat').removeClass('open'); });
+@@ -324,7 +462,7 @@
+     function sendAiMapInstruction() {
+         const instruction = $('#ai_map_instruction').val().trim();
+         if (!instruction) return;
+-        if (!tripState.lastOptimizePayload) { alert('Chưa có lộ trình nào để chỉnh sửa.'); return; }
++        if (!tripState.sessionId) { alert('Chưa có lộ trình nào để chỉnh sửa.'); return; }
+ 
+         appendChatBubble(instruction, 'user');
+         $('#ai_map_instruction').val('').prop('disabled', true);
+@@ -339,6 +477,7 @@
+             user_preference: $('#user_preference').val(),
+             current_ids: currentItineraryIds(),
+             instruction: instruction,
++            session_id: tripState.sessionId,
+         };
+ 
+         $.ajax({
+@@ -347,18 +486,23 @@
+             success: function (refineRes) {
+                 $('#ai-map-chat-log .loading').remove();
+                 appendChatBubble(refineRes.advice_text || 'Mình đã cập nhật lộ trình cho bạn.', 'assistant');
++                tripState.sessionId = refineRes.session_id || tripState.sessionId;
+ 
+-                // AI -> Backend -> Route recalculation -> Timeline update -> Map update:
+-                // gọi lại /api/optimize-route với ai_selected_ids mới để toàn bộ pipeline
+-                // (Greedy fill-up, timeline, map) được cập nhật đồng bộ, không chỉ vá 1 phần.
+-                const optimizePayload = Object.assign({}, tripState.lastOptimizePayload, { ai_selected_ids: refineRes.suggested_ids });
+-                tripState.aiSuggestedIds = refineRes.suggested_ids;
++                // CHỈ TÍNH LẠI đúng itinerary đang xem (mục 9), không sinh lại 5
++                // route mới: ai-refine đã tự ghi excluded_ids/pinned_ids vào phiên
++                // ở trên rồi, nên ở đây không cần truyền lại remove_ids/add_ids —
++                // /api/itinerary/update tự đọc state đó ra để tính lại.
+                 $.ajax({
+-                    url: 'http://127.0.0.1:8000/api/optimize-route', method: 'POST',
+-                    contentType: 'application/json', data: JSON.stringify(optimizePayload),
++                    url: 'http://127.0.0.1:8000/api/itinerary/update', method: 'POST',
++                    contentType: 'application/json',
++                    data: JSON.stringify({ session_id: tripState.sessionId }),
+                     success: function (res) {
+-                        if (res.status === 'success') applyOptimizeResult(res, optimizePayload);
+-                        else appendChatBubble('Không thể cập nhật bản đồ: ' + res.message, 'assistant');
++                        if (res.status === 'success') {
++                            tripState.currentRoutes.routes[tripState.activeRouteIndex] = res.itinerary;
++                            renderTimelineAndMap(res.itinerary, $('#vehicle_type').val(), tripState.currentRoutes.available_minutes);
++                        } else {
++                            appendChatBubble('Không thể cập nhật bản đồ: ' + res.message, 'assistant');
++                        }
+                     },
+                     error: () => appendChatBubble('Không thể tính lại lộ trình, vui lòng thử lại.', 'assistant'),
+                 });
+@@ -387,4 +531,4 @@
+             error: () => $('#upload-status').html('<span class="text-danger">Lỗi Upload</span>')
+         });
+     });
+-});
+\ No newline at end of file
++});
+########## index.html ##########
+--- repo/index.html	2026-09-17 16:33:30.474072194 +0000
++++ work/index.html	2026-09-18 03:19:23.944646794 +0000
+@@ -71,9 +71,9 @@
+ 
+             <div id="ai-quick-actions" class="d-flex flex-wrap gap-2 mb-5"></div>
+             
+-            <h5 class="fw-bold mb-3"><i class="fa-solid fa-map-pin text-danger"></i> Những điểm dừng chân gợi ý:</h5>
+-            <div class="place-carousel mb-5" id="ai-places-grid">
+-                <!-- Javascript sẽ vẽ các Card ảnh + Rating vào đây, cuộn ngang -->
++            <h5 class="fw-bold mb-3"><i class="fa-solid fa-route text-danger"></i> Chọn một lộ trình bạn thích:</h5>
++            <div class="route-list mb-5" id="ai-routes-grid">
++                <!-- Javascript sẽ vẽ 3–5 route card (tên, chủ đề, mô tả, tổng thời gian) vào đây -->
+             </div>
+ 
+             <div class="d-flex gap-3 justify-content-center">
+########## style.css ##########
+--- repo/style.css	2026-09-17 16:33:30.476399762 +0000
++++ work/style.css	2026-09-18 03:19:29.506829408 +0000
+@@ -71,6 +71,20 @@
+ .quick-action-chip:hover { background: #2D3748; color: white; border-color: #2D3748; }
+ .quick-action-chip:disabled { opacity: 0.6; cursor: wait; }
+ 
++/* Danh sách 3–5 lộ trình gợi ý ở Screen 2 (mục 2, mục 3): mỗi route là một
++   card độc lập, người dùng bấm để chọn trước khi "Chốt lộ trình". */
++.route-list { display: flex; flex-direction: column; gap: 14px; }
++.route-card {
++    border-radius: 16px; background: white; cursor: pointer;
++    box-shadow: 0 5px 15px rgba(0,0,0,0.05); border: 2px solid #edf2f7;
++    padding: 18px 20px; transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
++}
++.route-card:hover { transform: translateY(-3px); box-shadow: 0 12px 24px rgba(0,0,0,0.08); }
++.route-card.selected { border-color: #d87c4f; box-shadow: 0 8px 20px rgba(216,124,79,0.18); }
++.route-card-theme { display: inline-block; font-size: 0.8rem; font-weight: 700; color: #d87c4f; margin-bottom: 4px; }
++.route-card-desc { color: #718096; font-size: 0.92rem; margin-bottom: 8px; }
++.route-card-stats { color: #2D3748; font-size: 0.85rem; font-weight: 600; }
++
+ /* MAP SECTION */
+ #map-section { display: none; height: 100vh; width: 100vw; position: relative; }
+ #map { height: 100%; width: 100%; }
