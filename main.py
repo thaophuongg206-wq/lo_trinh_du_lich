@@ -35,7 +35,7 @@ import sqlite3
 # State itinerary phía backend (excluded_ids, route đã sinh, current_itinerary).
 from itinerary_store import store
 
-SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
+SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-5K1IGMEK\SQLEXPRESS')
 DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
 SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
 
