@@ -23,8 +23,6 @@ body, html {
     padding: 40px; width: 100%; max-width: 850px;
 }
 
-/* Responsive: trên tablet/mobile các field co lại và tự xuống hàng thay vì
-   bị khoá cứng ở col-md-2/col-md-4, tránh cắt chữ/số hoặc vỡ layout. */
 @media (max-width: 991.98px) {
     .search-box { padding: 28px 20px; }
 }
@@ -41,7 +39,6 @@ body, html {
     box-shadow: 0 10px 30px rgba(0,0,0,0.05); font-size: 1.15rem; line-height: 1.8;
 }
 
-/* Danh sách điểm gợi ý: carousel cuộn ngang thay vì grid dọc dài */
 .place-carousel {
     display: flex; gap: 18px; overflow-x: auto; padding: 6px 4px 14px;
     scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
@@ -62,7 +59,6 @@ body, html {
     padding: 5px 10px; border-radius: 12px; font-weight: 700; color: #d87c4f; font-size: 0.9rem;
 }
 
-/* Chip gợi ý tiếp nối ("+ Thêm quán ăn trưa", "+ Bớt một điểm"...) */
 .quick-action-chip {
     background: white; border: 1px solid #e2e8f0; border-radius: 999px;
     padding: 8px 16px; font-size: 0.9rem; font-weight: 600; color: #2D3748;
@@ -71,8 +67,6 @@ body, html {
 .quick-action-chip:hover { background: #2D3748; color: white; border-color: #2D3748; }
 .quick-action-chip:disabled { opacity: 0.6; cursor: wait; }
 
-/* Danh sách 3–5 lộ trình gợi ý ở Screen 2 (mục 2, mục 3): mỗi route là một
-   card độc lập, người dùng bấm để chọn trước khi "Chốt lộ trình". */
 .route-list { display: flex; flex-direction: column; gap: 14px; }
 .route-card {
     border-radius: 16px; background: white; cursor: pointer;
@@ -96,18 +90,54 @@ body, html {
 @media (max-width: 575.98px) {
     .route-sidebar { width: calc(100vw - 24px); left: 12px; top: 12px; padding: 18px; max-height: 45vh; }
 }
+
+/* TIMELINE CƠ BẢN */
 .timeline-ui { list-style: none; padding-left: 20px; border-left: 2px solid #edf2f7; margin: 0; }
 .timeline-ui li { position: relative; padding-bottom: 25px; padding-left: 20px; }
 .timeline-ui li::before {
     content: ""; position: absolute; left: -27px; top: 0; width: 14px; height: 14px;
     background-color: #d87c4f; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 2px #d87c4f;
 }
+
+.timeline-period-header {
+    font-size: 1.1rem; font-weight: 800; color: #d87c4f;
+    padding-left: 0 !important; margin-left: -20px;
+    padding-bottom: 12px !important; border: none; background: white;
+}
+.timeline-period-header::before { display: none !important; }
+
+/* TIMELINE MỞ RỘNG (ACCORDION) */
+.timeline-header {
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+.timeline-header:hover {
+    opacity: 0.8;
+}
+
+.timeline-extra-content {
+    display: none; /* Mặc định ẩn ảnh và review */
+    margin-top: 10px;
+    margin-bottom: 5px;
+}
+
+.timeline-image {
+    width: 100%;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 12px;
+    margin-top: 0px; 
+    border: 1px solid #edf2f7;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+}
+
 .timeline-review {
     margin-top: 6px; padding: 8px 10px; background: #FFF8F0; border-radius: 10px;
     font-size: 0.85rem; color: #8a5a34; font-style: italic;
+    display: block; /* Hiện full chữ vì đã bị ẩn trong extra-content */
 }
 
-/* Marker theo category trên bản đồ */
+/* MARKERS & CHAT */
 .map-marker-icon {
     color: white; border-radius: 50%; width: 30px; height: 30px;
     display: flex; align-items: center; justify-content: center;
@@ -115,7 +145,6 @@ body, html {
     box-shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
 
-/* ADMIN BUTTON (chỉ hiện với ?admin=1, xem app.js) */
 .admin-trigger {
     position: fixed; bottom: 20px; right: 20px; width: 40px; height: 40px;
     background: #e2e8f0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -123,8 +152,6 @@ body, html {
 }
 .admin-trigger:hover { opacity: 1; background: #2d3748; color: white; }
 
-/* FAB "Hỏi AI" trên màn hình bản đồ — không đè legend/zoom control (Leaflet zoom
-   nằm góc trên-trái, sidebar chiếm bên trái, nên đặt FAB ở góc dưới-phải). */
 .ai-fab {
     position: absolute; bottom: 28px; right: 28px; z-index: 1001;
     width: 58px; height: 58px; border-radius: 50%; border: none;
@@ -142,6 +169,7 @@ body, html {
     background: #F8F9FA; border-radius: 10px; padding: 8px 10px; margin-bottom: 6px;
 }
 .ai-map-chat-log .chat-bubble.user { background: #2D3748; color: white; text-align: right; }
+
 @media (max-width: 575.98px) {
     .ai-fab { bottom: 16px; right: 16px; }
     .ai-map-chat { right: 10px; bottom: 86px; width: calc(100vw - 20px); }
