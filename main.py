@@ -287,38 +287,119 @@ def get_large_vehicle_restriction_factor(vehicle_type: str, time_str: str) -> fl
 # Backend quyết định tên dựa trên loai_hinh chiếm ưu thế trong route,
 # KHÔNG dùng index xoay vòng qua danh sách tên cố định.
 # ============================================================
-_CATEGORY_ROUTE_NAME = {
-    "Cafe": "Hơi thở thiên nhiên & Sống chậm",
-    "Tham quan": "Không gian hoài niệm & Khám phá",
-    "Checkin": "Khám phá góc phố & Check-in",
-    "TTTM": "Mua sắm & Giải trí trọn vẹn",
-    "Ăn uống": "Hành trình ẩm thực",
+# ============================================================
+# ĐẶT TÊN LỘ TRÌNH THEO TRẢI NGHIỆM THẬT & CẢM XÚC
+# Tên route phản ánh chủ đề, loại hình, nhịp độ và không khí trải nghiệm,
+# TUYỆT ĐỐI KHÔNG dùng logic máy móc kiểu "Đa dạng - 9h36", "Theo sở thích - 12h".
+# ============================================================
+THEME_EXPERIENCE_NAMES = {
+    "relax": [
+        "Hà Nội chậm rãi & Những khoảng lặng",
+        "Cafe, phố cũ và những khoảng nghỉ",
+        "Thong thả ngắm phố & Tìm chút bình yên",
+        "Nhịp sống êm đềm bên góc phố quen",
+    ],
+    "food": [
+        "Một ngày khám phá Hà Nội qua ẩm thực",
+        "Hành trình vị giác & Hương vị phố xưa",
+        "Hà Nội đậm đà qua từng góc quán",
+        "Hương vị truyền thống & Cà phê phố cổ",
+    ],
+    "culture": [
+        "Dấu ấn văn hóa & Chiều sâu nghìn năm",
+        "Hà Nội hoài niệm qua các di sản",
+        "Lắng đọng ký ức lịch sử & Di tích xưa",
+        "Hành trình di sản & Chiều sâu văn hiến",
+    ],
+    "time_optimized": [
+        "Cung đường tinh gọn & Trải nghiệm liền mạch",
+        "Khám phá trọng tâm, tối ưu nhịp điệu",
+        "Hành trình kết nối nhanh các điểm đến",
+        "Gọn gàng từng bước chân & Tiện lợi tối đa",
+    ],
+    "exploration": [
+        "Góc nhìn mới & Những khám phá bất ngờ",
+        "Hà Nội mở rộng qua những góc phố mới",
+        "Hành trình vi vu & Khám phá nét độc đáo",
+        "Chạm vào những điểm đến ít người biết",
+    ],
+    "highlight": [
+        "Tinh hoa Hà Nội qua những điểm nổi bật",
+        "Trọn vẹn các điểm đến được yêu thích nhất",
+        "Những tọa độ biểu tượng không thể bỏ lỡ",
+        "Hành trình điểm hẹn kinh kỳ",
+    ],
+    "preference": [
+        "Hành trình thiết kế riêng theo gu của bạn",
+        "Theo dòng cảm xúc & Không gian yêu thích",
+        "Giai điệu bình yên theo đúng sở thích",
+        "Hành trình dành riêng cho tâm hồn bạn",
+    ],
+    "diverse": [
+        "Trọn vẹn sắc màu phố thị",
+        "Hòa nhịp muôn màu trải nghiệm Hà Nội",
+        "Góc nhìn đa chiều & Trải nghiệm phong phú",
+        "Một ngày sống trọn chất Hà Thành",
+    ],
 }
 
-def generate_route_name(route_points: list, route_index: int) -> str:
+CATEGORY_EXPERIENCE_NAMES = {
+    "Cafe": "Cafe, phố cũ và những khoảng nghỉ",
+    "Tham quan": "Dấu ấn văn hóa & Chiều sâu di sản",
+    "Checkin": "Hà Nội qua những góc check-in",
+    "TTTM": "Nhịp sống hiện đại & Mua sắm giải trí",
+    "Ăn uống": "Một ngày khám phá ẩm thực phố thị",
+}
+
+THEME_EXPERIENCE_DESCRIPTIONS = {
+    "relax": "Hành trình nhẹ nhàng, thong thả với ít điểm dừng để bạn dành nhiều thời gian cảm nhận từng nơi và tận hưởng bầu không khí mà không phải vội vã.",
+    "food": "Chuyến du hành ẩm thực kết nối những món ngon nức tiếng và quán cafe có gu, thỏa mãn trọn vẹn vị giác của người sành ăn.",
+    "culture": "Hành trình giàu chiều sâu cảm xúc qua các không gian di sản, kiến trúc hoài niệm, đưa bạn ngược dòng lịch sử lắng đọng cùng thủ đô.",
+    "time_optimized": "Cung đường được tính toán tối ưu quãng đường di chuyển, tiết kiệm tối đa thời gian trên đường để bạn tận hưởng nhiều thời gian tham quan nhất.",
+    "exploration": "Dành cho những ai thích đổi gió với cung đường mở rộng, chạm vào những góc phố và điểm hẹn mang nét độc đáo, bất ngờ.",
+    "highlight": "Tuyển tập những địa danh tiêu biểu và được yêu thích nhất, hoàn hảo cho một ngày trải nghiệm tinh hoa thành phố.",
+    "preference": "Lộ trình được tuyển chọn riêng bám sát mong muốn và tâm trạng của bạn, mang lại trải nghiệm chuẩn gu và đong đầy cảm xúc.",
+    "diverse": "Hành trình đa sắc màu kết hợp hài hòa giữa tham quan, thưởng thức ẩm thực và thư giãn, đem lại trải nghiệm phong phú suốt cả ngày.",
+}
+
+
+def generate_route_name(route_points: list, route_index: int = 1, theme: str = "", user_preference: str = "") -> str:
     """
-    Sinh tên lộ trình dựa trên đặc điểm thực tế (loai_hinh) của các điểm
-    trong route đó. Nếu một loại hình chiếm >=60% số điểm, dùng tên chủ đề
-    tương ứng. Nếu route có từ 3 loại hình khác nhau trở lên, đặt tên phản
-    ánh sự đa dạng. Nếu không đủ dữ liệu để đặt tên có ý nghĩa, dùng tên
-    an toàn "Lộ trình {index}" thay vì đoán bừa.
+    Sinh tên lộ trình dựa trên trải nghiệm thật, theme, loại hình địa điểm và sở thích.
+    Tuyệt đối không dùng tên máy móc.
     """
-    if not route_points:
-        return f"Lộ trình {route_index}"
+    idx_offset = max(0, route_index - 1)
 
-    counts = {}
-    for p in route_points:
-        lh = p.get("loai_hinh") or "Khác"
-        counts[lh] = counts.get(lh, 0) + 1
+    # 1. Nếu có theme và có danh sách tên trải nghiệm cho theme
+    if theme in THEME_EXPERIENCE_NAMES:
+        options = THEME_EXPERIENCE_NAMES[theme]
+        # Nếu có loại hình chiếm ưu thế áp đảo (>60%), ưu tiên tên trải nghiệm của loại hình đó
+        if route_points:
+            counts = {}
+            for p in route_points:
+                lh = p.get("loai_hinh") or "Khác"
+                counts[lh] = counts.get(lh, 0) + 1
+            total = len(route_points)
+            dominant, dcount = max(counts.items(), key=lambda kv: kv[1])
+            if dcount / total >= 0.6 and dominant in CATEGORY_EXPERIENCE_NAMES and theme in ("diverse", "preference", "exploration"):
+                return CATEGORY_EXPERIENCE_NAMES[dominant]
 
-    total = len(route_points)
-    dominant, dcount = max(counts.items(), key=lambda kv: kv[1])
+        return options[idx_offset % len(options)]
 
-    if dcount / total >= 0.6 and dominant in _CATEGORY_ROUTE_NAME:
-        return _CATEGORY_ROUTE_NAME[dominant]
-    if len(counts) >= 3:
-        return "Trải nghiệm trọn vẹn nhịp sống đô thị"
-    return f"Lộ trình {route_index}"
+    # 2. Nếu không có theme, dựa trên cơ cấu loại hình
+    if route_points:
+        counts = {}
+        for p in route_points:
+            lh = p.get("loai_hinh") or "Khác"
+            counts[lh] = counts.get(lh, 0) + 1
+        total = len(route_points)
+        dominant, dcount = max(counts.items(), key=lambda kv: kv[1])
+        if dcount / total >= 0.6 and dominant in CATEGORY_EXPERIENCE_NAMES:
+            return CATEGORY_EXPERIENCE_NAMES[dominant]
+        if len(counts) >= 3:
+            return "Trọn vẹn sắc màu phố thị"
+
+    return f"Hành trình trải nghiệm {route_index}"
 
 
 # ============================================================
@@ -327,8 +408,7 @@ def generate_route_name(route_points: list, route_index: int) -> str:
 # Mỗi route candidate được gắn một `theme`. Theme KHÔNG phải nhãn trang trí:
 # nó quyết định scorer nào được dùng, pool candidate nào được cấp, và ngân
 # sách thời gian nào được áp — tức là các route thực sự khác nhau về tập
-# điểm / thứ tự / tổng thời gian / mức độ di chuyển, chứ không phải "5 route
-# đổi tên".
+# điểm / thứ tự / tổng thời gian / mức độ di chuyển.
 # ============================================================
 ROUTE_THEMES = {
     "time_optimized": {"label": "🏃 Tiết kiệm thời gian", "desc": "Đi gần, ít di chuyển, tận dụng tối đa thời gian tham quan."},
@@ -355,11 +435,10 @@ def _fmt_minutes(mins) -> str:
     return f"{h}h{m:02d}" if m else f"{h}h"
 
 
-def generate_route_description(route_points: list, theme: str, total_minutes, travel_minutes) -> str:
+def generate_route_description(route_points: list, theme: str, total_minutes, travel_minutes, user_preference: str = "") -> str:
     """
-    Mô tả ngắn, sinh từ SỐ LIỆU THẬT của route (số điểm, cơ cấu loại hình,
-    tổng thời gian, thời gian di chuyển) — không phải câu quảng cáo cố định,
-    để người dùng ở Screen 2 so sánh được 3–5 lộ trình bằng thông tin thực.
+    Mô tả ngắn, gợi mở trải nghiệm và giúp người dùng hiểu rõ lộ trình này
+    khác lộ trình kia ở đâu (nhịp độ, phong cách, thời gian di chuyển).
     """
     visitable = [p for p in route_points if p.get("loai_hinh") != "diem_xuat_phat"]
     counts = {}
@@ -368,15 +447,19 @@ def generate_route_description(route_points: list, theme: str, total_minutes, tr
         counts[lh] = counts.get(lh, 0) + 1
     breakdown = ", ".join(f"{n} {lh.lower()}" for lh, n in sorted(counts.items(), key=lambda kv: -kv[1]))
 
+    narrative = THEME_EXPERIENCE_DESCRIPTIONS.get(
+        theme,
+        "Hành trình kết hợp hài hòa các điểm đến để bạn có trải nghiệm trọn vẹn và thoải mái nhất."
+    )
+
     parts = [f"{len(visitable)} điểm"]
     if breakdown:
         parts.append(breakdown)
-    parts.append(f"tổng {_fmt_minutes(total_minutes)}")
     parts.append(f"di chuyển {_fmt_minutes(travel_minutes)}")
+    parts.append(f"tổng {_fmt_minutes(total_minutes)}")
 
-    prefix = ROUTE_THEMES.get(theme, {}).get("desc", "")
-    body = " · ".join(parts)
-    return f"{prefix} {body}." if prefix else f"{body}."
+    stats = " · ".join(parts)
+    return f"{narrative} ({stats})."
 
 
 def get_global_osrm_matrix(points_list, vehicle_type: str = "xe_may"):
@@ -855,8 +938,12 @@ def format_route_object(route: dict, index: int) -> dict:
     theme = route.get("theme", "diverse")
     total = route.get("total_time_minutes", 0)
 
-    route_points = [{"loai_hinh": p.get("loai_hinh")} for p in places]
-    name = route.get("route_name") or generate_route_name(route_points, index)
+    route_points = [{"loai_hinh": p.get("loai_hinh"), "ten": p.get("ten")} for p in places]
+    existing_name = route.get("route_name")
+    if not existing_name or existing_name.startswith("Lộ trình ") or existing_name.startswith("Hành trình trải nghiệm "):
+        name = generate_route_name(route_points, index, theme)
+    else:
+        name = existing_name
 
     route.update({
         "route_id": f"route_{index}",
@@ -1165,7 +1252,7 @@ def run_route_generation(request: OptimizationRequest,
             "trip_date": str(base_date),
             "strategy": route_label,
             "theme": route_theme,
-            "route_name": generate_route_name(route_pts, route_index),
+            "route_name": generate_route_name(route_pts, route_index, route_theme, request.user_preference),
             "avg_preference_score": round(avg_preference, 3),
             "must_visit_covered": covered_must,
             "must_visit_total": len(must_visit_ids),
@@ -1526,24 +1613,38 @@ class ItineraryUpdateRequest(BaseModel):
 
 def _ensure_unique_names(routes: list) -> list:
     """
-    Screen 2 đặt 3–5 lộ trình cạnh nhau, nên hai route trùng tên là vô nghĩa với
-    người dùng dù tập điểm bên trong đã khác nhau. Khi trùng, lấy nhãn theme làm
-    yếu tố phân biệt (theme phản ánh đúng chiến lược đã sinh ra route đó).
+    Đảm bảo 3–5 lộ trình ở Screen 2 có tên độc nhất, phản ánh đúng trải nghiệm,
+    tránh hoàn toàn việc trùng tên hay dùng tên đánh số khô khan.
     """
     seen = set()
-    for r in routes:
-        name = r.get("name") or r["route_id"]
+    for idx, r in enumerate(routes, 1):
+        name = r.get("name") or r.get("route_name") or f"Hành trình trải nghiệm {idx}"
+        theme = r.get("theme", "diverse")
+        options = THEME_EXPERIENCE_NAMES.get(theme, [])
+
         if name in seen:
-            # Dùng thẳng nhãn theme làm tên — nó mô tả đúng chiến lược đã sinh ra
-            # route này, dễ hiểu hơn nhiều so với việc nối chuỗi hay đánh số.
-            label = ROUTE_THEMES.get(r.get("theme"), {}).get("label", "")
-            name = label or f"Lộ trình {r['route_id'].split('_')[-1]}"
-            n = 2
-            while name in seen:
-                name = f"{label} #{n}" if label else f"Lộ trình {n}"
-                n += 1
-            r["name"] = name
-            r["route_name"] = name
+            found_alt = False
+            for opt in options:
+                if opt not in seen:
+                    name = opt
+                    found_alt = True
+                    break
+            if not found_alt:
+                suffixes = ["(Góc nhìn mới)", "(Nhịp điệu sâu lắng)", "(Cung đường mở rộng)", "(Phiên bản thong thả)"]
+                for suf in suffixes:
+                    cand = f"{name} {suf}"
+                    if cand not in seen:
+                        name = cand
+                        found_alt = True
+                        break
+            if not found_alt:
+                n = 2
+                while f"{name} #{n}" in seen:
+                    n += 1
+                name = f"{name} #{n}"
+
+        r["name"] = name
+        r["route_name"] = name
         seen.add(name)
     return routes
 
