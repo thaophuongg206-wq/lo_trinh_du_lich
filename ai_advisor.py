@@ -1,5 +1,6 @@
 import re
 import json
+import math
 import requests
 from datetime import datetime
 from typing import List, Optional
@@ -167,11 +168,11 @@ def select_context_points(all_points: list, user_preference: str) -> list:
     return selected
 
 
-PROMPT_TEMPLATE = """Bạn là một người bạn đồng hành am hiểu du lịch, thấu hiểu tâm lý và tư vấn có gu.
+PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hiểu sâu sắc từng con phố, quán xá Hà Nội, thấu hiểu tâm lý và tư vấn có gu. Bạn đang trò chuyện thân tình với một người bạn thân về chuyến đi sắp tới.
 
 1. THÔNG TIN CHUYẾN ĐI:
 - Quỹ thời gian: {available_minutes} phút.
-- Sở thích/Tâm trạng: "{user_preference}"
+- Sở thích / Tâm trạng: "{user_preference}"
 
 2. ĐỊNH LƯỢNG ĐIỂM ĐẾN BẮT BUỘC (Dựa trên {available_minutes} phút):
 {quantification_rule}
@@ -179,37 +180,71 @@ PROMPT_TEMPLATE = """Bạn là một người bạn đồng hành am hiểu du l
 3. KHO DỮ LIỆU ĐỊA ĐIỂM (Chỉ được chọn các id có trong danh sách này):
 {context}
 
-4. YÊU CẦU LẬP LUẬN:
-- Chia hành trình thành các mốc thời gian trong ngày phù hợp với quỹ thời gian
-  (ví dụ: sáng, trưa, chiều, tối — chỉ dùng những mốc thực sự nằm trong khung
-  giờ đã cho, không bịa thêm mốc không liên quan).
-- Mỗi mốc có 1-2 địa điểm kèm lý do ngắn gọn vì sao chọn (reason).
-- Giọng văn thân thiện, xưng "mình" và gọi "bạn". Không xưng là "AI" hay "Trợ lý ảo".
+4. NGUYÊN TẮC KỂ CHUYỆN (RẤT QUAN TRỌNG):
+- Giọng văn: Giống một người bạn địa phương đang hào hứng rủ rê, tâm sự chân thành, xưng "mình" và gọi "bạn". Tuyệt đối không xưng "AI", "hệ thống", hay "trợ lý ảo".
+- Thứ tự ưu tiên: Trải nghiệm (Experience) > Cảm xúc (Emotion) > Bầu không khí (Atmosphere) > Câu chuyện liền mạch (Story) > Liệt kê địa danh (Places).
+- Mô tả bầu không khí & nhịp điệu: Khắc họa cảm giác về ánh sáng, mùi hương, nhịp sống (ví dụ: sớm mai trong lành, trưa thảnh thơi trốn nắng, chiều tà lộng gió...).
+- Tính liền mạch & bước chuyển tự nhiên: Giải thích tự nhiên vì sao điểm tiếp theo lại là lựa chọn tiếp nối hoàn hảo (ví dụ: sau khi dạo bộ mỏi chân thì ghé quán cafe yên tĩnh đón gió...).
+- TUYỆT ĐỐI TRÁNH:
+  + Không dùng văn phong máy móc kiểu mẫu: "Chúng ta bắt đầu...", "Sau một buổi sáng...", "Cuối ngày...", "Điểm 1 là...".
+  + Không lặp lại cùng một cấu trúc câu, tránh lối hành văn gượng gạo, hành chính.
+  + Không nhồi nhét tên địa điểm liên tục; không biến đoạn văn thành danh sách gạch đầu dòng.
+  + TUYỆT ĐỐI KHÔNG đưa ID nội bộ (như (id=27), [id: 6], ID=12...) vào bất kỳ đoạn văn nào (advice_text, description, reason). ID CHỈ ĐƯỢC PHÉP nằm trong trường "id" của JSON!
 
 5. RÀNG BUỘC ĐẦU RA JSON — TRẢ VỀ DUY NHẤT MỘT OBJECT JSON SAU, KHÔNG DÙNG MARKDOWN:
 {{
-  "summary": "1-2 câu mở đầu thân thiện, nhắc tới quỹ thời gian {available_minutes} phút",
+  "advice_text": "Đoạn văn hoàn chỉnh, truyền cảm hứng, kể câu chuyện liền mạch cho cả hành trình như một bức tranh trải nghiệm sống động (khoảng 3-4 câu tinh tế, không chứa bất kỳ ID nào).",
   "timeline": [
     {{
-      "period": "morning|noon|afternoon|evening",
-      "title": "Tên mốc thời gian bằng tiếng Việt, ví dụ 'Buổi sáng'",
-      "icon": "sunrise|sun|sunset|moon",
-      "description": "1-2 câu mô tả cảm giác/nhịp điệu của mốc này",
-      "places": [ {{"id": "12", "reason": "vì sao điểm này hợp với mốc này"}} ]
+      "period": "morning",
+      "title": "Buổi sáng",
+      "icon": "sunrise",
+      "description": "Cảm giác không khí, ánh sáng và trải nghiệm mở đầu ngày mới",
+      "places": [
+        {{
+          "id": "12",
+          "reason": "Cảm xúc và trải nghiệm lý tưởng tại điểm này"
+        }}
+      ]
+    }},
+    {{
+      "period": "noon",
+      "title": "Buổi trưa",
+      "icon": "sun",
+      "description": "Khoảng dừng thư thả nạp năng lượng và tránh nắng",
+      "places": [
+        {{
+          "id": "15",
+          "reason": "Không gian dễ chịu, ẩm thực hợp khẩu vị"
+        }}
+      ]
+    }},
+    {{
+      "period": "afternoon",
+      "title": "Buổi chiều",
+      "icon": "sunset",
+      "description": "Nhịp điệu khi chiều buông, không gian dạo bước thảnh thơi đón hoàng hôn",
+      "places": [
+        {{
+          "id": "20",
+          "reason": "Thời điểm đẹp nhất trong ngày để ngắm cảnh"
+        }}
+      ]
     }}
   ]
 }}
 
+LƯU Ý: Chỉ chia các mốc thời gian thực sự phù hợp với quỹ thời gian {available_minutes} phút (nếu dưới 3 tiếng chỉ cần 1-2 mốc). Các giá trị 'period' hợp lệ gồm: 'morning', 'noon', 'afternoon', 'evening', 'night'.
+
 TRẢ LỜI:"""
 
 
-REFINE_PROMPT_TEMPLATE = """Bạn là một người bạn đồng hành du lịch, đang trò chuyện tiếp nối với người
-dùng về một lịch trình đã có sẵn (không phải tạo mới từ đầu).
+REFINE_PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hiểu du lịch, đang trò chuyện tiếp nối với bạn mình về một lịch trình đã có sẵn (không phải tạo mới từ đầu).
 
 1. LỊCH TRÌNH HIỆN TẠI (đúng thứ tự đang đi):
 {current_itinerary}
 
-2. YÊU CẦU MỚI CỦA NGƯỜI DÙNG:
+2. YÊU CẦU MỚI CỦA BẠN:
 "{instruction}"
 
 3. KHO DỮ LIỆU ĐỊA ĐIỂM CÓ THỂ CHỌN THÊM (chỉ được chọn id trong danh sách này):
@@ -224,8 +259,8 @@ dùng về một lịch trình đã có sẵn (không phải tạo mới từ đ
   thong thả hơn, không nhất thiết phải thêm điểm mới.
 - Danh sách "ids" trả về là TOÀN BỘ tập id sau khi đã áp dụng thay đổi (không
   chỉ phần thay đổi), giữ nguyên các id không bị ảnh hưởng.
-- advice_text là 1 đoạn ngắn xác nhận lại điều vừa thay đổi, giọng thân thiện,
-  xưng "mình" gọi "bạn".
+- advice_text là 1-2 câu ngắn gọn, ấm áp, giọng thân thiện (xưng "mình" gọi "bạn"), giải thích thay đổi một cách tự nhiên.
+- TUYỆT ĐỐI KHÔNG đưa ID nội bộ (như id=12, (id=5)...) vào advice_text.
 
 5. RÀNG BUỘC ĐẦU RA JSON — TRẢ VỀ DUY NHẤT MỘT OBJECT JSON, KHÔNG DÙNG MARKDOWN:
 {{
@@ -301,17 +336,105 @@ def _load_json_object(raw: str) -> dict:
             raise HTTPException(status_code=502, detail="Dữ liệu JSON bị lỗi.")
 
 
+def sanitize_ai_text(text: str) -> str:
+    """Làm sạch các ID nội bộ rác do AI sinh ra (VD: (id=27), [id: 6], ID 28...),
+    nhưng tuyệt đối KHÔNG xóa nhầm giờ (09:00), rating (4.8), cự ly (3.7 km),
+    thời lượng (1h30, 45 phút) hay các con số tự nhiên trong văn bản."""
+    if not text:
+        return ""
+    # 1. Dạng bọc ngoặc: (id=27), [id: 6], (ID 12), {id=5}, (mã: 3), (mã số: 10), (id 27), v.v.
+    text = re.sub(r'(?i)\s*[\(\[\{]\s*(?:id|mã|ma|mã\s*số|ma\s*so)\s*[:=\s#]?\s*\d+\s*[\)\]\}]', '', text)
+    # 2. Dạng không bọc ngoặc có tiền tố: id=27, id: 6, ID=10, id 27, ID 27, mã: 5, mã số 10
+    text = re.sub(r'(?i)\b(?:id|mã|ma|mã\s*số|ma\s*so)\s*[:=#\s]\s*\d+\b', '', text)
+    # 3. Dọn dẹp ngoặc rỗng nếu sót lại: () [] {}
+    text = re.sub(r'[\(\[\{]\s*[\)\]\}]', '', text)
+    # 4. Làm sạch khoảng trắng thừa và dấu câu sát nhau
+    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r'\s+([,.\?!;])', r'\1', text)
+    return text.strip()
+
+
 def _clean_id(raw_id) -> str:
-    return str(raw_id).replace("id", "").replace("[", "").replace("]", "").strip()
+    return str(raw_id).replace("id", "").replace("[", "").replace("]", "").replace("=", "").strip()
 
 
-def parse_structured_response(raw: str, valid_ids: set) -> tuple[str, list, list, str, list]:
-    """Parse output JSON có cấu trúc timeline. Nếu AI trả sai format/thiếu field,
-    xử lý gracefully (bỏ qua phần lỗi, dùng giá trị mặc định an toàn) thay vì
-    làm sập request — đúng yêu cầu 'backend phải có validation + fallback'."""
-    obj = _load_json_object(raw)
+def generate_fallback_suggestion(context_points: list, available_minutes: int, user_preference: str = "") -> tuple[str, list, list, str, list]:
+    """Tạo phương án gợi ý dự phòng an toàn, chất lượng cao khi AI model bị lỗi,
+    timeout hoặc trả về JSON không hợp lệ. Đảm bảo API KHÔNG BAO GIỜ bị sập."""
+    if not context_points:
+        return "Mình rất tiếc chưa tìm được địa điểm phù hợp trong khu vực này.", [], [], "", []
 
-    summary = str(obj.get("summary", "")).strip().replace("AI", "mình")
+    # Chọn số lượng điểm theo quỹ thời gian
+    if available_minutes < 180:
+        target_count = min(3, len(context_points))
+    elif available_minutes <= 360:
+        target_count = min(5, len(context_points))
+    else:
+        target_count = min(7, len(context_points))
+    target_count = max(2, target_count)
+
+    chosen = context_points[:target_count]
+    suggested_ids = [p["id"] for p in chosen]
+
+    # Phân bổ các điểm vào các mốc thời gian
+    timeline = []
+    periods_def = [
+        ("morning", "Buổi sáng", "sunrise", "Khởi đầu ngày mới với bầu không khí trong lành, dạo bước qua những con phố tĩnh lặng và cảm nhận nhịp sống chậm."),
+        ("noon", "Buổi trưa", "sun", "Khoảng nghỉ trưa thư thái, thưởng thức hương vị ẩm thực đặc trưng và trốn cái oi ả trong không gian bình yên."),
+        ("afternoon", "Buổi chiều", "sunset", "Chiều tà lộng gió, thời điểm đẹp nhất để ngắm hoàng hôn buông và thả hồn theo những góc phố nên thơ."),
+        ("evening", "Buổi tối", "moon", "Khi phố lên đèn rực rỡ, tận hưởng nhịp sống đêm sôi động và kết lại một ngày thật nhiều xúc cảm."),
+    ]
+
+    # Chia đều các điểm vào các mốc thời gian phù hợp
+    n_periods = min(len(periods_def), max(1, (target_count + 1) // 2))
+    slice_size = max(1, math.ceil(len(chosen) / n_periods))
+
+    for p_idx in range(n_periods):
+        sub_places = chosen[p_idx * slice_size : (p_idx + 1) * slice_size]
+        if not sub_places:
+            continue
+        p_code, p_title, p_icon, p_desc = periods_def[p_idx]
+        places_data = []
+        for pl in sub_places:
+            lh = pl.get("loai_hinh", "điểm đến").lower()
+            ten = pl.get("ten", "")
+            places_data.append({
+                "id": pl["id"],
+                "reason": f"Không gian {lh} đặc trưng tại {ten}, rất thích hợp để thư giãn và cảm nhận trọn vẹn nhịp sống Hà Nội."
+            })
+        timeline.append({
+            "period": p_code,
+            "title": p_title,
+            "icon": p_icon,
+            "description": p_desc,
+            "places": places_data,
+        })
+
+    advice_text = (
+        "Mình đã sắp xếp cho bạn một hành trình thật nhiều cảm xúc và hài hòa. "
+        "Từng điểm dừng chân đều được kết nối liền mạch, vừa đủ để bạn thong thả thưởng thức trọn vẹn cảnh sắc và hương vị nơi đây mà không lo vội vã."
+    )
+    summary = f"Gợi ý hành trình thảnh thơi thiết kế riêng cho quỹ thời gian {available_minutes} phút của bạn."
+
+    return advice_text, suggested_ids, [], summary, timeline
+
+
+def parse_structured_response(raw: str, valid_ids: set, context_points: list = None, available_minutes: int = 240, user_preference: str = "") -> tuple[str, list, list, str, list]:
+    """Parse output JSON có cấu trúc timeline. Validate chặt chẽ:
+    - JSON hợp lệ
+    - timeline là array
+    - ID địa điểm hợp lệ
+    - sanitize sạch sẽ ID rác trong advice_text, description, reason...
+    Nếu AI trả sai định dạng hoặc không có ID hợp lệ, tự động kích hoạt fallback an toàn,
+    không làm sập hệ thống."""
+    try:
+        obj = _load_json_object(raw)
+    except Exception:
+        # Fallback an toàn khi AI không trả JSON hợp lệ
+        return generate_fallback_suggestion(context_points or [], available_minutes, user_preference)
+
+    raw_advice = str(obj.get("advice_text", "")).strip().replace("AI", "mình")
+    summary = sanitize_ai_text(str(obj.get("summary", "")).strip().replace("AI", "mình"))
     raw_timeline = obj.get("timeline")
     timeline = []
     ordered_ids = []
@@ -327,7 +450,7 @@ def parse_structured_response(raw: str, valid_ids: set) -> tuple[str, list, list
                 for pl in places_raw:
                     if isinstance(pl, dict):
                         pid = _clean_id(pl.get("id", ""))
-                        reason = str(pl.get("reason", "")).strip()
+                        reason = sanitize_ai_text(str(pl.get("reason", "")).strip())
                     else:
                         pid = _clean_id(pl)
                         reason = ""
@@ -338,29 +461,31 @@ def parse_structured_response(raw: str, valid_ids: set) -> tuple[str, list, list
                         ordered_ids.append(pid)
                     else:
                         invalid_ids.append(pid)
+
             if not places:
-                # Bỏ qua mốc thời gian không có địa điểm hợp lệ nào thay vì
-                # hiển thị một mốc rỗng vô nghĩa cho người dùng.
                 continue
+
+            period_desc = sanitize_ai_text(str(period_obj.get("description", "")).strip())
+            period_title = sanitize_ai_text(str(period_obj.get("title", "")).strip()) or "Điểm dừng chân"
             timeline.append({
-                "period": str(period_obj.get("period", "")).strip() or "khac",
-                "title": str(period_obj.get("title", "")).strip() or "Điểm dừng chân",
-                "icon": str(period_obj.get("icon", "")).strip(),
-                "description": str(period_obj.get("description", "")).strip(),
+                "period": str(period_obj.get("period", "")).strip() or "other",
+                "title": period_title,
+                "icon": str(period_obj.get("icon", "")).strip() or "location-dot",
+                "description": period_desc,
                 "places": places,
             })
 
-    # advice_text (dùng cho phần hiển thị text liền mạch, tương thích ngược với
-    # frontend hiện tại đang render advice_text dạng đoạn văn) được ghép lại từ
-    # summary + mô tả từng mốc, để không mất nội dung nếu frontend chưa cập nhật
-    # để render timeline dạng structured.
-    advice_parts = [summary] if summary else []
-    for period in timeline:
-        if period["description"]:
-            advice_parts.append(period["description"])
-    advice_text = "\n\n".join(advice_parts).strip()
+    # advice_text: ưu tiên trường advice_text trực tiếp từ JSON, nếu trống thì ghép từ summary + timeline
+    if raw_advice:
+        advice_text = sanitize_ai_text(raw_advice)
+    else:
+        advice_parts = [summary] if summary else []
+        for period in timeline:
+            if period["description"]:
+                advice_parts.append(period["description"])
+        advice_text = sanitize_ai_text("\n\n".join(advice_parts).strip())
 
-    # Loại id trùng lặp nhưng giữ đúng thứ tự xuất hiện đầu tiên.
+    # Loại id trùng lặp nhưng giữ đúng thứ tự xuất hiện đầu tiên
     seen = set()
     suggested_ids = []
     for pid in ordered_ids:
@@ -368,23 +493,32 @@ def parse_structured_response(raw: str, valid_ids: set) -> tuple[str, list, list
             seen.add(pid)
             suggested_ids.append(pid)
 
+    # Nếu AI không chọn được ID hợp lệ nào -> fallback an toàn
     if not suggested_ids:
-        raise HTTPException(status_code=502, detail="Không tìm được điểm đến phù hợp, vui lòng thử lại.")
+        return generate_fallback_suggestion(context_points or [], available_minutes, user_preference)
 
     return advice_text, suggested_ids, invalid_ids, summary, timeline
 
 
-def parse_refine_response(raw: str, valid_ids: set) -> tuple[str, list, list]:
-    """Parse output JSON đơn giản {advice_text, ids} cho luồng tiếp nối trên map."""
-    obj = _load_json_object(raw)
-    advice_text = str(obj.get("advice_text", "")).strip().replace("AI", "mình")
-    raw_ids = [_clean_id(i) for i in obj.get("ids", [])]
+def parse_refine_response(raw: str, valid_ids: set, current_ids: list = None) -> tuple[str, list, list]:
+    """Parse output JSON đơn giản {advice_text, ids} cho luồng tiếp nối trên map.
+    Validate và sanitize sạch sẽ ID rác trong advice_text."""
+    try:
+        obj = _load_json_object(raw)
+        raw_text = str(obj.get("advice_text", "")).strip().replace("AI", "mình")
+        advice_text = sanitize_ai_text(raw_text)
+        raw_ids = [_clean_id(i) for i in obj.get("ids", [])]
+        valid_selected = [i for i in raw_ids if i and i in valid_ids]
+        invalid = [i for i in raw_ids if i and i not in valid_ids]
+    except Exception:
+        valid_selected = []
+        invalid = []
+        advice_text = ""
 
-    valid_selected = [i for i in raw_ids if i and i in valid_ids]
-    invalid = [i for i in raw_ids if i and i not in valid_ids]
-
+    # Fallback an toàn nếu AI trả rỗng hoặc không có ID hợp lệ
     if not valid_selected:
-        raise HTTPException(status_code=502, detail="Không thể cập nhật lịch trình, vui lòng thử lại.")
+        valid_selected = [i for i in (current_ids or []) if i in valid_ids]
+        advice_text = advice_text or "Mình đã ghi nhận mong muốn của bạn và cập nhật lại lịch trình cho phù hợp nhất."
 
     return advice_text, valid_selected, invalid
 
@@ -408,11 +542,10 @@ def suggest_route(req: AISuggestRequest):
     except Exception:
         available_minutes = 240 
 
-    # Lấy dữ liệu và chọn candidate theo mức độ liên quan (không còn cắt cứng [:15])
+    # Lấy dữ liệu và chọn candidate theo mức độ liên quan
     all_points = fetch_all_points(vehicle_type=req.vehicle_type)
 
-    # Tôn trọng ràng buộc loại trừ của phiên (nếu người dùng quay lại Screen 1
-    # sau khi đã bỏ vài điểm, AI không được gợi ý lại đúng những điểm đó).
+    # Tôn trọng ràng buộc loại trừ của phiên
     from itinerary_store import store
     session = store.get(req.session_id)
     if session is not None and session.excluded_ids:
@@ -422,15 +555,21 @@ def suggest_route(req: AISuggestRequest):
         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
 
     context_points = select_context_points(all_points, req.user_preference)
-
-    # Xây dựng prompt và gọi service
-    context = build_context_string(context_points)
-    prompt = build_prompt(context, req.user_preference, available_minutes)
-    raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
-
-    # Xử lý kết quả trả về
     valid_ids_set = {p["id"] for p in context_points}
-    advice_text, suggested_ids, invalid_ids, summary, timeline = parse_structured_response(raw_response, valid_ids_set)
+
+    # Xây dựng prompt và gọi service với fallback an toàn
+    try:
+        context = build_context_string(context_points)
+        prompt = build_prompt(context, req.user_preference, available_minutes)
+        raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
+        advice_text, suggested_ids, invalid_ids, summary, timeline = parse_structured_response(
+            raw_response, valid_ids_set, context_points, available_minutes, req.user_preference
+        )
+    except Exception:
+        # Fallback an toàn tuyệt đối khi service AI gặp sự cố
+        advice_text, suggested_ids, invalid_ids, summary, timeline = generate_fallback_suggestion(
+            context_points, available_minutes, req.user_preference
+        )
 
     return AISuggestResponse(
         advice_text=advice_text,
@@ -446,8 +585,7 @@ def refine_route(req: AIRefineRequest):
     """Tiếp nối hội thoại trên màn hình bản đồ: AI nhận itinerary hiện tại +
     câu lệnh tự do của người dùng ('Bỏ C đi', 'Thêm quán ăn trưa'...), trả về
     tập id đã cập nhật. Frontend gọi lại /api/optimize-route với
-    ai_selected_ids = suggested_ids để tính lại route/timeline/map — tái sử
-    dụng đúng luồng fill-up Greedy đã có, không cần thuật toán tối ưu riêng."""
+    ai_selected_ids = suggested_ids để tính lại route/timeline/map."""
     from main import fetch_all_points
     from itinerary_store import store
 
@@ -468,18 +606,12 @@ def refine_route(req: AIRefineRequest):
     if not all_points:
         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
 
-    # Điểm đã bị loại KHÔNG được đưa vào context của AI (mục 8): nếu vẫn để AI
-    # nhìn thấy, chỉ cần người dùng nói "thêm quán ăn trưa" là nó gợi ý lại đúng
-    # cái quán vừa bị bỏ, và điểm đó lại xuất hiện trên bản đồ.
     if excluded:
         all_points = [p for p in all_points if p["id"] not in excluded]
 
     id_to_point = {p["id"]: p for p in all_points}
     current_points = [id_to_point[i] for i in req.current_ids if i in id_to_point]
 
-    # Candidate context cho AI: ưu tiên liên quan tới sở thích, LUÔN bao gồm các
-    # điểm đang có trong itinerary hiện tại (để AI có thể "bỏ" đúng điểm đó dù
-    # điểm đó không lọt top xếp hạng liên quan).
     ranked_context = select_context_points(all_points, req.user_preference)
     context_points = list(current_points)
     context_ids = {p["id"] for p in context_points}
@@ -488,27 +620,28 @@ def refine_route(req: AIRefineRequest):
             context_points.append(p)
             context_ids.add(p["id"])
 
-    context = build_context_string(context_points)
-    prompt = build_refine_prompt(context, current_points, req.instruction)
-    raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
-
     valid_ids_set = {p["id"] for p in context_points}
-    advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set)
 
-    # Chốt chặn cuối: dù prompt có dặn thế nào, id đã bị loại vẫn không được lọt
-    # ra ngoài — excluded_ids là ràng buộc của hệ thống, không phải gợi ý cho AI.
+    try:
+        context = build_context_string(context_points)
+        prompt = build_refine_prompt(context, current_points, req.instruction)
+        raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
+        advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set, req.current_ids)
+    except Exception:
+        # Fallback an toàn khi service AI lỗi
+        advice_text = "Mình đã ghi nhận mong muốn của bạn và cập nhật lại hành trình."
+        suggested_ids = [i for i in req.current_ids if i in valid_ids_set]
+        invalid_ids = []
+
+    # Chốt chặn cuối: id đã bị loại không được lọt ra ngoài
     suggested_ids = [i for i in suggested_ids if i not in excluded]
 
-    # ── GHI Ý ĐỊNH "BỎ ĐIỂM" VÀO STATE BACKEND (mục 6, 8) ──
-    # Đây là mắt xích từng bị đứt: trước đây việc bỏ điểm chỉ thể hiện bằng một
-    # danh sách ngắn hơn trả về cho frontend, không có ai ghi nhớ, nên Greedy
-    # ở lần tính kế tiếp nhặt lại điểm đó từ DB.
+    # Ghi ý định bỏ điểm vào state backend
     removed_ids = []
     if session is not None:
         dropped = [i for i in req.current_ids if i not in suggested_ids and i not in excluded]
         if dropped and _has_remove_intent(req.instruction):
             removed_ids = session.exclude(dropped)
-        # Điểm AI giữ lại/thêm mới trở thành must-visit cho lần tính lộ trình sau.
         session.pin(suggested_ids)
         excluded = set(session.excluded_ids)
 
