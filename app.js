@@ -53,19 +53,31 @@ $(document).ready(function () {
     function vehicleSentence(vType, distKm, mins) {
         const distStr = (Math.round((distKm || 0) * 10) / 10).toString().replace('.', ',');
         const minsStr = Math.round(mins || 0);
-        if (vType === 'di_bo') return `🚶 Bạn sẽ đi bộ khoảng ${distStr} km, mất khoảng ${minsStr} phút.`;
-        if (vType === 'xe_dap') return `🚲 Bạn đạp xe khoảng ${distStr} km, mất khoảng ${minsStr} phút.`;
-        if (vType === 'o_to') return `🚗 Đi xe khoảng ${distStr} km, mất khoảng ${minsStr} phút.`;
-        if (vType && vType.includes('cho')) return `🚌 Di chuyển khoảng ${distStr} km bằng xe, mất khoảng ${minsStr} phút.`;
-        return `🏍️ Di chuyển khoảng ${distStr} km bằng xe máy, mất khoảng ${minsStr} phút.`;
+        if (vType === 'di_bo') return '🚶 Bạn sẽ đi bộ khoảng ' + distStr + ' km, mất khoảng ' + minsStr + ' phút.';
+        if (vType === 'xe_dap') return '🚲 Bạn đạp xe khoảng ' + distStr + ' km, mất khoảng ' + minsStr + ' phút.';
+        if (vType === 'o_to') return '🚗 Đi xe khoảng ' + distStr + ' km, mất khoảng ' + minsStr + ' phút.';
+        if (vType && vType.includes('cho')) return '🚌 Di chuyển khoảng ' + distStr + ' km bằng xe, mất khoảng ' + minsStr + ' phút.';
+        return '🏍️ Di chuyển khoảng ' + distStr + ' km bằng xe máy, mất khoảng ' + minsStr + ' phút.';
     }
 
     function durationLabel(mins) {
         mins = Math.round(mins || 0);
         const h = Math.floor(mins / 60), m = mins % 60;
-        if (h <= 0) return `${m} phút`;
-        return m > 0 ? `${h}h${m}` : `${h}h`;
+        if (h <= 0) return m + ' phút';
+        return m > 0 ? h + 'h' + m : h + 'h';
     }
+
+    // Bắt sự kiện click để mở/đóng ảnh và review trong Timeline
+    $('#timeline-list').on('click', '.timeline-header', function() {
+        const $item = $(this).closest('.timeline-item');
+        const $extra = $item.find('.timeline-extra-content');
+        const $icon = $(this).find('.toggle-icon');
+        
+        if ($extra.length) {
+            $extra.slideToggle(200);
+            $icon.toggleClass('fa-chevron-down fa-chevron-up');
+        }
+    });
 
     // ============================================================
     // SCREEN 1 → INPUT
@@ -77,7 +89,7 @@ $(document).ready(function () {
         navigator.geolocation.getCurrentPosition(
             pos => {
                 tripState.currentLocationData = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-                $('#start_point').val(`📍 Vị trí GPS hiện tại`);
+                $('#start_point').val('📍 Vị trí GPS hiện tại');
                 $status.html('<span class="text-success"><i class="fa-solid fa-check"></i> Đã định vị</span>');
             }, () => $status.html('<span class="text-danger">Lỗi định vị</span>')
         );
@@ -98,8 +110,8 @@ $(document).ready(function () {
         const startPointText = $('#start_point').val().trim();
         const usingGPS = !!tripState.currentLocationData;
         const fingerprint = usingGPS
-            ? `gps:${tripState.currentLocationData.lat},${tripState.currentLocationData.lon}`
-            : `text:${startPointText}`;
+            ? 'gps:' + tripState.currentLocationData.lat + ',' + tripState.currentLocationData.lon
+            : 'text:' + startPointText;
 
         if (tripState.baseParams && tripState.startFingerprint === fingerprint) {
             onReady({
@@ -132,6 +144,7 @@ $(document).ready(function () {
         tripState.sessionId = res.session_id || tripState.sessionId;
         tripState.aiSuggestedIds = res.suggested_ids || [];
         $('#ai-advice-content').html((res.advice_text || '').replace(/\n/g, '<br>'));
+        $('#chat-title').text('🗺️ Chọn hành trình hợp với bạn');
         renderQuickActions();
     }
 
@@ -178,15 +191,23 @@ $(document).ready(function () {
         const $grid = $('#ai-routes-grid').empty();
         routes.forEach(r => {
             const isSelected = r.route_id === tripState.selectedRouteId;
+            const routeName = r.name || r.route_id;
+            const themeLabel = r.theme_label || '';
+            const description = r.description || '';
+            const placeCount = r.place_count || (r.places || []).length;
+            const durationTxt = durationLabel(r.total_duration);
+            
             const $card = $('<div class="route-card"></div>')
                 .toggleClass('selected', isSelected)
-                .attr('data-route-id', r.route_id)
-                .html(`
-                    <div class="route-card-theme">${r.theme_label || ''}</div>
-                    <h6 class="fw-bold mb-1">${r.name || r.route_id}</h6>
-                    <p class="route-card-desc">${r.description || ''}</p>
-                    <div class="route-card-stats"><i class="fa-regular fa-clock"></i> ${r.place_count || (r.places || []).length} điểm · ${durationLabel(r.total_duration)}</div>
-                `);
+                .attr('data-route-id', r.route_id);
+                
+            let htmlStr = '';
+            htmlStr += '<div class="route-card-theme">' + themeLabel + '</div>';
+            htmlStr += '<h6 class="fw-bold mb-1">' + routeName + '</h6>';
+            htmlStr += '<p class="route-card-desc">' + description + '</p>';
+            htmlStr += '<div class="route-card-stats"><i class="fa-regular fa-clock"></i> ' + placeCount + ' điểm · ' + durationTxt + '</div>';
+            
+            $card.html(htmlStr);
             $card.on('click', function () {
                 tripState.selectedRouteId = r.route_id;
                 $('#ai-routes-grid .route-card').removeClass('selected');
@@ -206,13 +227,22 @@ $(document).ready(function () {
     function renderQuickActions() {
         const $wrap = $('#ai-quick-actions').empty();
         QUICK_ACTIONS.forEach(qa => {
-            const $chip = $(`<button type="button" class="quick-action-chip">${qa.label}</button>`);
+            const $chip = $('<button type="button" class="quick-action-chip">' + qa.label + '</button>');
             $chip.on('click', function () { runQuickAction(qa.text, $chip); });
             $wrap.append($chip);
         });
     }
 
     function runQuickAction(instructionText, $chip) {
+        const labelText = $chip.text();
+        if (labelText.includes("ăn trưa")) {
+            $('#chat-title').text("🍜 Mình tìm vài lựa chọn ăn trưa hợp với hành trình này");
+        } else if (labelText.includes("cà phê")) {
+            $('#chat-title').text("☕ Một vài nơi để bạn nghỉ chân");
+        } else {
+            $('#chat-title').text("🗺️ Chọn hành trình hợp với bạn");
+        }
+
         $('#ai-quick-actions .quick-action-chip').prop('disabled', true);
         const payload = {
             region: 'Hanoi',
@@ -353,7 +383,8 @@ $(document).ready(function () {
         let tabsHtml = '<div id="route-tabs-container" class="d-flex gap-2 mb-3 overflow-auto pb-2">';
         routes.forEach((r, i) => {
             const label = r.name || r.strategy || ('Lộ trình ' + (i + 1));
-            tabsHtml += `<button class="btn btn-sm ${i === idx ? 'btn-dark' : 'btn-outline-dark'} fw-bold text-nowrap route-tab" data-idx="${i}">${label}</button>`;
+            const tabClass = (i === idx) ? 'btn-dark' : 'btn-outline-dark';
+            tabsHtml += '<button class="btn btn-sm ' + tabClass + ' fw-bold text-nowrap route-tab" data-idx="' + i + '">' + label + '</button>';
         });
         tabsHtml += '</div>';
         $('#metrics-info').before(tabsHtml);
@@ -380,26 +411,76 @@ $(document).ready(function () {
     }
 
     function renderTimelineAndMap(routeData, vType, totalMins) {
-        let vIcon = '<i class="fa-solid fa-car-side text-primary"></i>';
-        if (vType === 'xe_may') vIcon = '<i class="fa-solid fa-motorcycle text-primary"></i>';
-        if (vType === 'di_bo') vIcon = '<i class="fa-solid fa-person-walking text-primary"></i>';
-        if (vType === 'xe_dap') vIcon = '<i class="fa-solid fa-bicycle text-primary"></i>';
-        if (vType.includes('cho')) vIcon = '<i class="fa-solid fa-bus text-primary"></i>';
-
         const $timeline = $('#timeline-list').empty();
-        $('#metrics-info').html(`<strong><i class="fa-regular fa-clock"></i> Bắt đầu:</strong> ${routeData.optimized_route[0]?.arrive_time || '--:--'} <br> <strong><i class="fa-solid fa-flag-checkered"></i> Kết thúc:</strong> ${routeData.optimized_route[routeData.optimized_route.length - 1]?.depart_time || '--:--'} <br> Tổng: ${routeData.total_time_minutes} / ${totalMins} phút.`);
+        const startTime = routeData.optimized_route[0]?.arrive_time || '--:--';
+        const endTime = routeData.optimized_route[routeData.optimized_route.length - 1]?.depart_time || '--:--';
+        
+        let headerHtml = '<strong><i class="fa-regular fa-clock"></i> Bắt đầu:</strong> ' + startTime + ' <br> <strong><i class="fa-solid fa-flag-checkered"></i> Kết thúc:</strong> ' + endTime + ' <br> Tổng: ' + routeData.total_time_minutes + ' / ' + totalMins + ' phút.';
+        $('#metrics-info').html(headerHtml);
+
+        let currentPeriod = '';
 
         routeData.optimized_route.forEach((loc, idx) => {
+            const arriveHour = parseInt((loc.arrive_time || "00:00").split(':')[0], 10);
+            const arriveMin = parseInt((loc.arrive_time || "00:00").split(':')[1], 10);
+            let period = '';
+            let periodLabel = '';
+
+            if (arriveHour < 11 || (arriveHour === 11 && arriveMin < 30)) {
+                period = 'morning';
+                periodLabel = '🌅 Buổi sáng';
+            } else if (arriveHour < 14 || (arriveHour === 14 && arriveMin < 0)) {
+                period = 'noon';
+                periodLabel = '☀️ Buổi trưa';
+            } else {
+                period = 'afternoon';
+                periodLabel = '🌇 Buổi chiều / Tối';
+            }
+
+            if (period !== currentPeriod) {
+                $timeline.append('<li class="timeline-period-header">' + periodLabel + '</li>');
+                currentPeriod = period;
+            }
+
             const hasNext = idx < routeData.optimized_route.length - 1;
-            // Câu chữ di chuyển thân thiện, lấy đúng phương tiện thực tế từ itinerary
-            // thay vì hard-code "đi bộ" cho mọi trường hợp.
             const travelInfo = hasNext
-                ? `<div class="mt-2 small fw-bold text-muted">${vehicleSentence(vType, loc.distance_to_next, loc.travel_to_next)}</div>`
+                ? '<div class="mt-2 small fw-bold text-muted">' + vehicleSentence(vType, loc.distance_to_next, loc.travel_to_next) + '</div>'
                 : '';
-            // Hiển thị review nếu có, không render "undefined"/"null"/khoảng trống vô nghĩa.
+            
+            // Xử lý khối ẩn/hiện: Ảnh + Review
+            const imgUrl = loc.url_hinh_anh || loc.image_url || loc.image || '';
+            const imgHtml = imgUrl ? '<img src="' + imgUrl + '" class="timeline-image" alt="Hình ảnh">' : '';
             const review = (loc.review || '').trim();
-            const reviewHtml = review ? `<div class="timeline-review">★ “${review}”</div>` : '';
-            $timeline.append(`<li><span class="badge bg-dark mb-1">${loc.arrive_time} - ${loc.depart_time}</span><h6 class="fw-bold mb-1">${idx + 1}. ${loc.ten}</h6><div class="text-muted small"><i class="fa-solid fa-camera"></i> Tham quan: ${loc.visit_time} phút</div>${reviewHtml}${travelInfo}</li>`);
+            const reviewHtml = review ? '<div class="timeline-review">★ “' + review + '”</div>' : '';
+            
+            const extraContentHtml = (imgHtml !== '' || reviewHtml !== '') 
+                ? '<div class="timeline-extra-content">' + imgHtml + reviewHtml + '</div>' 
+                : '';
+            
+            let listItemHtml = '';
+            listItemHtml += '<li class="timeline-item">';
+            
+            // Phần Header (Luôn hiện, có thể click)
+            listItemHtml += '<div class="timeline-header">';
+            listItemHtml += '  <span class="badge bg-dark mb-1">' + loc.arrive_time + ' - ' + loc.depart_time + '</span>';
+            listItemHtml += '  <h6 class="fw-bold mb-1 d-flex justify-content-between align-items-center">';
+            listItemHtml += '    <span>' + (idx + 1) + '. ' + loc.ten + '</span>';
+            if (extraContentHtml !== '') {
+                listItemHtml += '    <i class="fa-solid fa-chevron-down text-muted small toggle-icon"></i>';
+            }
+            listItemHtml += '  </h6>';
+            listItemHtml += '  <div class="text-muted small"><i class="fa-solid fa-camera"></i> Tham quan: ' + loc.visit_time + ' phút</div>';
+            listItemHtml += '</div>';
+
+            // Phần nội dung mở rộng (ẩn mặc định)
+            listItemHtml += extraContentHtml;
+            
+            // Di chuyển (Luôn hiện bên dưới cùng)
+            listItemHtml += travelInfo;
+            
+            listItemHtml += '</li>';
+            
+            $timeline.append(listItemHtml);
         });
 
         drawMultiColorMap(routeData.optimized_route, vType);
@@ -412,13 +493,17 @@ $(document).ready(function () {
         const colors = ['#FF3B30', '#4CD964', '#007AFF', '#FFCC00', '#5856D6'];
 
         routeLocs.forEach((loc, idx) => {
-            // Marker phân biệt theo category thực tế (loai_hinh) thay vì chỉ là số
-            // đen trắng; số thứ tự vẫn có trong popup + timeline sidebar.
             const style = categoryStyle(loc.loai_hinh);
-            const iconHtml = `<div class="map-marker-icon" style="background:${style.color};"><i class="fa-solid ${style.icon}"></i></div>`;
+            let iconHtml = '<div class="map-marker-icon" style="background:' + style.color + ';"><i class="fa-solid ' + style.icon + '"></i></div>';
+            
             const review = (loc.review || '').trim();
-            const reviewHtml = review ? `<div class="mt-1 small fst-italic">★ “${review}”</div>` : '';
-            const popupHtml = `<b style="font-size:14px;">${idx + 1}. ${loc.ten}</b><div class="small text-muted">${loc.loai_hinh || ''}</div>${reviewHtml}`;
+            const reviewHtml = review ? '<div class="mt-1 small fst-italic">★ “' + review + '”</div>' : '';
+            
+            let popupHtml = '';
+            popupHtml += '<b style="font-size:14px;">' + (idx + 1) + '. ' + loc.ten + '</b>';
+            popupHtml += '<div class="small text-muted">' + (loc.loai_hinh || '') + '</div>';
+            popupHtml += reviewHtml;
+            
             const marker = L.marker([loc.lat, loc.lon], {icon: L.divIcon({html: iconHtml, className: '', iconSize: [30,30], iconAnchor: [15,15]})}).bindPopup(popupHtml).addTo(map);
             mapMarkers.push(marker);
         });
@@ -454,7 +539,7 @@ $(document).ready(function () {
     }
 
     function appendChatBubble(text, who) {
-        $('#ai-map-chat-log').append(`<div class="chat-bubble ${who}">${text}</div>`);
+        $('#ai-map-chat-log').append('<div class="chat-bubble ' + who + '">' + text + '</div>');
         const log = document.getElementById('ai-map-chat-log');
         log.scrollTop = log.scrollHeight;
     }
@@ -527,7 +612,7 @@ $(document).ready(function () {
         $('#upload-status').html('<span class="text-primary">Đang nạp dữ liệu...</span>');
         $.ajax({
             url: 'http://127.0.0.1:8000/api/admin/import-excel', method: 'POST', data: formData, processData: false, contentType: false,
-            success: res => $('#upload-status').html(`<span class="text-success">${res.message}</span>`),
+            success: res => $('#upload-status').html('<span class="text-success">' + res.message + '</span>'),
             error: () => $('#upload-status').html('<span class="text-danger">Lỗi Upload</span>')
         });
     });
