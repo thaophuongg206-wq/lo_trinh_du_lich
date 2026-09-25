@@ -193,7 +193,7 @@ PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hiểu s�
 
 5. RÀNG BUỘC ĐẦU RA JSON — TRẢ VỀ DUY NHẤT MỘT OBJECT JSON SAU, KHÔNG DÙNG MARKDOWN:
 {{
-  "advice_text": "Đoạn văn hoàn chỉnh, truyền cảm hứng, kể câu chuyện liền mạch cho cả hành trình như một bức tranh trải nghiệm sống động (khoảng 3-4 câu tinh tế, không chứa bất kỳ ID nào).",
+  "advice_text": "Đoạn văn mở đầu chào hỏi, đánh giá chung về không khí du lịch của khu vực và sự phù hợp với sở thích của người dùng (khoảng 2-3 câu). TUYỆT ĐỐI KHÔNG mô tả chi tiết lịch trình ở đây vì nó sẽ dùng làm lời giới thiệu tổng quan (khoảng 3-4 câu tinh tế, không chứa bất kỳ ID nào).",
   "timeline": [
     {{
       "period": "morning",
