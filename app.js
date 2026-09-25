@@ -226,10 +226,32 @@ $(document).ready(function () {
     }
 
     function renderRouteCards(routes) {
-        const $grid = $('#ai-routes-grid').empty();
+        const $grid =$('#ai-routes-grid').empty();
         routes.forEach(r => {
             const isSelected = r.route_id === tripState.selectedRouteId;
-            const $card = $('<div class="route-card"></div>')
+            
+            // Xây dựng Timeline mở rộng cho Screen 2
+            let timelineHtml = '<ul class="timeline-ui mt-3 pt-3 border-top" style="display: none;">';
+            if (r.timeline && r.timeline.length > 0) {
+                r.timeline.forEach(item => {
+                    if (item.type === 'visit') {
+                        const loc = r.places.find(p => p.id === item.place_id) || {};
+                        const imgHtml = loc.url_hinh_anh ? `<img src="${loc.url_hinh_anh}" class="timeline-image mt-2 mb-2" style="height: 120px;">` : '';
+                        timelineHtml += `
+                            <li>
+                                <span class="badge bg-dark mb-1">${item.start} - ${item.end}</span>
+                                <h6 class="fw-bold mb-1">${item.order}. ${item.name}</h6>
+                                ${imgHtml}
+                            </li>
+                        `;
+                    } else if (item.type === 'travel') {
+                        timelineHtml += `<div class="mt-1 mb-2 ms-4 small fw-bold text-muted border-start ps-3" style="border-color: #d87c4f !important;">🚗 Di chuyển ${item.duration} phút</div>`;
+                    }
+                });
+            }
+            timelineHtml += '</ul>';
+
+            const $card =$('<div class="route-card"></div>')
                 .toggleClass('selected', isSelected)
                 .attr('data-route-id', r.route_id)
                 .html(`
@@ -237,11 +259,28 @@ $(document).ready(function () {
                     <h6 class="fw-bold mb-1">${r.name || r.route_id}</h6>
                     <p class="route-card-desc">${r.description || ''}</p>
                     <div class="route-card-stats"><i class="fa-regular fa-clock"></i> ${r.place_count || (r.places || []).length} điểm · ${durationLabel(r.total_duration)}</div>
+                    ${timelineHtml}
                 `);
+
+            // Nếu đang được chọn thì mở timeline ra
+            if (isSelected) $card.find('.timeline-ui').show();
+
             $card.on('click', function () {
+                // Đóng tất cả và bỏ chọn
                 tripState.selectedRouteId = r.route_id;
                 $('#ai-routes-grid .route-card').removeClass('selected');
-                $(this).addClass('selected');
+                $('#ai-routes-grid .timeline-ui').slideUp('fast');
+                
+                // Chọn thẻ hiện tại và mở timeline
+                $(this).addClass('selected');$(this).find('.timeline-ui').slideDown('fast');
+                
+                // Báo cho backend biết đang chọn lộ trình nào
+                $.ajax({
+                    url: 'http://127.0.0.1:8000/api/routes/select',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ session_id: tripState.sessionId, route_id: r.route_id })
+                });
             });
             $grid.append($card);
         });
@@ -263,18 +302,34 @@ $(document).ready(function () {
         });
     }
 
-    function runQuickAction(instructionText, $chip) {
+function runQuickAction(instructionText, $chip) {
+        if (!tripState.selectedRouteId) return alert("Vui lòng chọn một lộ trình bên dưới trước khi chỉnh sửa!");
+
         $('#ai-quick-actions .quick-action-chip').prop('disabled', true);
+        
+        // Tạo Popup Loading khóa màn hình
+        const loadingHtml = `
+            <div id="quick-action-loading" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <div class="spinner-border text-danger" style="width: 3rem; height: 3rem;" role="status"></div>
+                <h5 class="mt-3 fw-bold text-dark">Đang tinh chỉnh địa điểm cho phù hợp...</h5>
+            </div>`;
+        $('body').append(loadingHtml);
+
+        // 1. Lấy ID của DUY NHẤT lộ trình đang được User chọn
+        const currentRoute = tripState.currentRoutes.routes.find(r => r.route_id === tripState.selectedRouteId);
+        const currentIds = currentRoute.places.map(p => p.id).filter(id => id !== 'gps_current');
+
         const payload = {
             region: 'Hanoi',
             vehicle_type: $('#vehicle_type').val(),
             start_time: $('#start_time').val(),
             end_time: $('#end_time').val(),
             user_preference: $('#user_preference').val(),
-            current_ids: tripState.aiSuggestedIds,
+            current_ids: currentIds, // Context bây giờ là chuẩn 100%
             instruction: instructionText,
             session_id: tripState.sessionId,
         };
+
         $.ajax({
             url: 'http://127.0.0.1:8000/api/ai-refine',
             method: 'POST',
@@ -282,12 +337,35 @@ $(document).ready(function () {
             data: JSON.stringify(payload),
             success: function (res) {
                 tripState.sessionId = res.session_id || tripState.sessionId;
-                tripState.aiSuggestedIds = res.suggested_ids || tripState.aiSuggestedIds;
-                $('#ai-advice-content').html((res.advice_text || '').replace(/\n/g, '<br>'));
-                fetchRoutes(() => $('#ai-quick-actions .quick-action-chip').prop('disabled', false));
+                
+                // 2. Chỉ tính lại lộ trình đang thao tác, không phá vỡ 4 lộ trình còn lại
+                $.ajax({
+                    url: 'http://127.0.0.1:8000/api/itinerary/update',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ 
+                        session_id: tripState.sessionId,
+                        ai_advice: res.advice_text
+                    }),
+                    success: function (updateRes) {
+                        if (updateRes.status === 'success') {
+                            // Ghi đè vào đúng vị trí lộ trình cũ trong State
+                            const idx = tripState.currentRoutes.routes.findIndex(r => r.route_id === tripState.selectedRouteId);
+                            if(idx >= 0) tripState.currentRoutes.routes[idx] = updateRes.itinerary;
+                            
+                            // Render lại danh sách, thẻ nào đang select sẽ tự động trượt mở Timeline
+                            renderRouteCards(tripState.currentRoutes.routes);
+                        }
+                    },
+                    complete: function() {
+                        $('#quick-action-loading').remove();
+                        $('#ai-quick-actions .quick-action-chip').prop('disabled', false);
+                    }
+                });
             },
             error: (xhr) => {
                 alert("Không cập nhật được gợi ý: " + (xhr.responseJSON?.detail || "Kiểm tra Backend."));
+                $('#quick-action-loading').remove();
                 $('#ai-quick-actions .quick-action-chip').prop('disabled', false);
             }
         });
@@ -449,38 +527,6 @@ $(document).ready(function () {
         $('#map-section').fadeIn();
         setTimeout(() => map.invalidateSize(), 100);
 
-        $('#route-tabs-container').remove();
-        let tabsHtml = '<div id="route-tabs-container" class="d-flex gap-2 mb-3 overflow-auto pb-2">';
-        routes.forEach((r, i) => {
-            const label = r.name || r.strategy || ('Lộ trình ' + (i + 1));
-            tabsHtml += `<button class="btn btn-sm ${i === idx ? 'btn-dark' : 'btn-outline-dark'} fw-bold text-nowrap route-tab" data-idx="${i}">${label}</button>`;
-        });
-        tabsHtml += '</div>';
-        $('#metrics-info').before(tabsHtml);
-
-        $('.route-tab').click(function () {
-            const newIdx = $(this).data('idx');
-            $('.route-tab').removeClass('btn-dark').addClass('btn-outline-dark');
-            $(this).removeClass('btn-outline-dark').addClass('btn-dark');
-
-            tripState.activeRouteIndex = newIdx;
-            tripState.selectedRouteId = routes[newIdx].route_id;
-
-            setCurrentItinerary(routes[newIdx]);
-            refreshCurrentItinerary();
-
-            // Đồng bộ với backend (không chặn UI)
-            $.ajax({
-                url: 'http://127.0.0.1:8000/api/routes/select',
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({
-                    session_id: tripState.sessionId,
-                    route_id: routes[newIdx].route_id
-                }),
-            });
-        });
-
         setCurrentItinerary(routes[idx]);
         refreshCurrentItinerary();
     }
@@ -496,22 +542,32 @@ $(document).ready(function () {
 
         // Không ghi đè #metrics-info nữa — để renderItinerarySummary phụ trách
 
-        routeData.optimized_route.forEach((loc, idx) => {
-            const hasNext = idx < routeData.optimized_route.length - 1;
-            const travelInfo = hasNext
-                ? `<div class="mt-2 small fw-bold text-muted">${vehicleSentence(vType, loc.distance_to_next, loc.travel_to_next)}</div>`
-                : '';
-            const review = (loc.review || '').trim();
-            const reviewHtml = review ? `<div class="timeline-review">★ “${review}”</div>` : '';
-            $timeline.append(`
-                <li>
-                    <span class="badge bg-dark mb-1">${loc.arrive_time} - ${loc.depart_time}</span>
-                    <h6 class="fw-bold mb-1">${idx + 1}. ${loc.ten}</h6>
-                    <div class="text-muted small"><i class="fa-solid fa-camera"></i> Tham quan: ${loc.visit_time} phút</div>
-                    ${reviewHtml}${travelInfo}
-                </li>
-            `);
-        });
+        if (routeData.timeline && routeData.timeline.length > 0) {
+            routeData.timeline.forEach(item => {
+                if (item.type === 'visit') {
+                    const loc = routeData.optimized_route.find(p => p.id === item.place_id) || {};
+                    const review = (loc.review || '').trim();
+                    const reviewHtml = review ? `<div class="timeline-review mt-2">★ “${review}”</div>` : '';
+                    const imgHtml = loc.url_hinh_anh ? `<img src="${loc.url_hinh_anh}" class="timeline-image mt-2 mb-2">` : ''; // Thêm ảnh
+                    
+                    $timeline.append(`
+                        <li>
+                            <span class="badge bg-dark mb-1">${item.start} - ${item.end}</span>
+                            <h6 class="fw-bold mb-1">${item.order}. ${item.name}</h6>
+                            <div class="text-muted small"><i class="fa-solid fa-camera"></i> Tham quan: ${item.duration} phút</div>
+                            ${imgHtml}
+                            ${reviewHtml}
+                        </li>
+                    `);
+                } else if (item.type === 'travel') {
+                    $timeline.append(`
+                        <div class="mt-2 mb-3 ms-4 small fw-bold text-muted border-start ps-3" style="border-color: #d87c4f !important;">
+                            ${vehicleSentence(vType, item.distance_km, item.duration)}
+                        </div>
+                    `);
+                }
+            });
+        }
 
         drawMultiColorMap(routeData.optimized_route, vType);
     }
@@ -657,7 +713,10 @@ $(document).ready(function () {
                     url: 'http://127.0.0.1:8000/api/itinerary/update',
                     method: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({ session_id: tripState.sessionId }),
+                    data: JSON.stringify({ 
+                        session_id: tripState.sessionId,
+                        ai_advice: refineRes.advice_text // Gửi câu từ của AI xuống
+                    }),
                     success: function (res) {
                         if (res.status !== 'success' || !res.itinerary) {
                             appendChatBubble(

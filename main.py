@@ -35,7 +35,7 @@ import sqlite3
 # State itinerary phía backend (excluded_ids, route đã sinh, current_itinerary).
 from itinerary_store import store
 
-SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-5K1IGMEK\SQLEXPRESS')
+SERVER   = os.getenv("DB_SERVER",   r'LAPTOP-EV7C4EMM')
 DATABASE = os.getenv("DB_NAME",     'DuLichThongMinh')
 SQLITE_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")
 
@@ -390,8 +390,9 @@ def generate_route_name(route_points: list, route_index: int = 1, theme: str = "
     if route_points:
         counts = {}
         for p in route_points:
-            lh = p.get("loai_hinh") or "Khác"
-            counts[lh] = counts.get(lh, 0) + 1
+                lh_str = p.get("loai_hinh") or "Khác"
+                for lh in [x.strip() for x in lh_str.split(",")]:
+                    counts[lh] = counts.get(lh, 0) + 1
         total = len(route_points)
         dominant, dcount = max(counts.items(), key=lambda kv: kv[1])
         if dcount / total >= 0.6 and dominant in CATEGORY_EXPERIENCE_NAMES:
@@ -443,8 +444,9 @@ def generate_route_description(route_points: list, theme: str, total_minutes, tr
     visitable = [p for p in route_points if p.get("loai_hinh") != "diem_xuat_phat"]
     counts = {}
     for p in visitable:
-        lh = p.get("loai_hinh") or "Khác"
-        counts[lh] = counts.get(lh, 0) + 1
+        lh_str = p.get("loai_hinh") or "Khác"
+        for lh in [x.strip() for x in lh_str.split(",")]:
+            counts[lh] = counts.get(lh, 0) + 1
     breakdown = ", ".join(f"{n} {lh.lower()}" for lh, n in sorted(counts.items(), key=lambda kv: -kv[1]))
 
     narrative = THEME_EXPERIENCE_DESCRIPTIONS.get(
@@ -922,7 +924,7 @@ def build_timeline(places: list) -> list:
     return timeline
 
 
-def format_route_object(route: dict, index: int) -> dict:
+def format_route_object(route: dict, index: int, ai_advice: str = None) -> dict:
     """
     Đóng gói route thành MỘT THỰC THỂ ĐỘC LẬP theo schema mục 3.
 
@@ -950,7 +952,7 @@ def format_route_object(route: dict, index: int) -> dict:
         "name": name,
         "theme": theme,
         "theme_label": ROUTE_THEMES.get(theme, {}).get("label", theme),
-        "description": generate_route_description(places, theme, total, travel_time),
+        "description": ai_advice if ai_advice else generate_route_description(places, theme, total, travel_time),
         "places": places,
         "timeline": build_timeline(places),
         "total_duration": round(total, 1),
@@ -969,7 +971,8 @@ def run_route_generation(request: OptimizationRequest,
                          excluded_ids: set = None,
                          must_visit_ids: set = None,
                          force_visit_ids: set = None,
-                         mode: str = "multi"):
+                         mode: str = "multi",
+                         ai_advice: str = None):  # Bổ sung tham số
     """
     LÕI SINH LỘ TRÌNH — dùng chung cho mọi endpoint (mục 10, 11).
 
@@ -1531,7 +1534,19 @@ def run_route_generation(request: OptimizationRequest,
             )
 
         best = max(generated_routes, key=_rank)
-        itinerary = format_route_object(best, 1)
+        
+        # Tự động lấy đúng index của lộ trình đang thao tác thay vì gán cứng số 1
+        route_idx = 1
+        if request.session_id:
+            s = store.get(request.session_id)
+            if s and s.selected_route_id and "_" in s.selected_route_id:
+                try:
+                    route_idx = int(s.selected_route_id.split("_")[1])
+                except ValueError:
+                    pass
+                    
+        # Sử dụng route_idx và giữ nguyên ai_advice
+        itinerary = format_route_object(best, route_idx, ai_advice=ai_advice)
         return {
             "status": "success",
             "available_minutes": available_minutes,
@@ -1609,6 +1624,7 @@ class ItineraryUpdateRequest(BaseModel):
     remove_ids: Optional[List[str]] = None    # Loại vĩnh viễn trong phiên (mục 6)
     restore_ids: Optional[List[str]] = None   # Bỏ loại trừ khi người dùng đổi ý
     add_ids: Optional[List[str]] = None       # Ghim thêm điểm (must-visit)
+    ai_advice: Optional[str] = None           # Bổ sung để nhận văn phong của AI
 
 
 def _ensure_unique_names(routes: list) -> list:
@@ -1801,11 +1817,11 @@ async def update_itinerary(req: ItineraryUpdateRequest):
     session.restore(req.restore_ids or [])
     newly_excluded = session.exclude(req.remove_ids or [])
 
-    # Giữ lại các điểm đang có trong itinerary (trừ điểm vừa xoá) làm must-visit.
+    # Lấy danh sách điểm user yêu cầu thêm, loại bỏ điểm bị cấm
     forced = {str(i) for i in (req.add_ids or [])} - session.excluded_ids
-    keep = set(session.current_place_ids()) - session.excluded_ids
-    keep |= forced
-    session.pinned_ids = keep
+    # KHÔNG lấy lại current_place_ids cũ. Giữ nguyên những gì AI đã ghim (session.pinned_ids) và kết hợp với forced
+    session.pinned_ids = (session.pinned_ids | forced) - session.excluded_ids
+    keep = session.pinned_ids
 
     opt_request = _request_from_session(session)
     result = run_route_generation(
@@ -1814,6 +1830,7 @@ async def update_itinerary(req: ItineraryUpdateRequest):
         must_visit_ids=keep,
         force_visit_ids=forced,
         mode="single",
+        ai_advice=req.ai_advice  # Truyền giá trị xuống
     )
     if result.get("status") != "success":
         result["session_id"] = session.session_id
