@@ -749,38 +749,84 @@ def two_opt_algorithm(route, matrix_dict, points_data, k_weather, vehicle_type, 
                     improved = True
     return best_route, best_cost, best_violation_idx
 
-def fetch_all_points(vehicle_type: str = None):
+# ============================================================
+# THAY THE hàm fetch_all_points cũ trong main.py (khoảng dòng 752–800) bằng hàm dưới đây.
+# Yêu cầu: dùng DB v2 (có cột CUA_SO_THOI_GIAN.thu). Cần `from collections import Counter` ở đầu main.py
+# (hoặc giữ nguyên import trong hàm như bên dưới).
+# ============================================================
+def fetch_all_points(vehicle_type: str = None, trip_date=None, bo_diem_dong_cua: bool = False):
     """
-    Lấy toàn bộ địa điểm từ DB (dùng chung cho /api/optimize-route và /api/ai-suggest,
-    tránh lặp lại logic parse giờ mở/đóng cửa ở nhiều nơi).
-    Nếu truyền vehicle_type, lọc luôn theo khả năng tiếp cận của phương tiện.
+    Lấy toàn bộ địa điểm từ DB (dùng chung cho /api/optimize-route và /api/ai-suggest).
+
+    trip_date  : date | "YYYY-MM-DD" | None
+      * Có trip_date: chọn khung giờ đúng THỨ của ngày đó (CUA_SO_THOI_GIAN.thu: 1=Thứ Hai ... 7=Chủ nhật,
+        NULL = áp dụng mọi ngày). Điểm có dữ liệu giờ nhưng KHÔNG có khung nào cho thứ đó (nghỉ hôm đó) bị LOẠI.
+      * Không có trip_date: mỗi điểm vẫn chỉ ra 1 dòng, lấy khung giờ phổ biến nhất (giữ hành vi cũ, AI/test dùng được).
+    bo_diem_dong_cua : True thì bỏ các điểm trang_thai_du_lieu = 'da_dong_cua' (quán đã đóng vĩnh viễn).
+    Điểm không có dòng giờ nào: coi như mở cả ngày (như cũ).
     """
+    from collections import Counter
+
+    weekday = None
+    if trip_date:
+        if isinstance(trip_date, str):
+            try:
+                trip_date = datetime.strptime(trip_date[:10], "%Y-%m-%d").date()
+            except Exception:
+                trip_date = None
+        if trip_date:
+            weekday = trip_date.isoweekday()
+
     conn, db_type = get_db_connection()
     cursor = conn.cursor()
     query = """
         SELECT d.id, d.ten, d.vi_do, d.kinh_do, d.thoi_gian_tham_quan_phut, d.diem_gia_tri, d.loai_hinh,
-               c.gio_mo_cua, c.gio_dong_cua,
+               c.gio_mo_cua, c.gio_dong_cua, c.thu,
                d.mo_ta, d.thong_tin_chi_tiet, d.review, d.phu_hop, d.url_hinh_anh,
-               COALESCE(d.cap_do_tiep_can, 3) AS cap_do_tiep_can
+               COALESCE(d.cap_do_tiep_can, 3) AS cap_do_tiep_can,
+               d.trang_thai_du_lieu
         FROM DIA_DIEM d
         LEFT JOIN CUA_SO_THOI_GIAN c ON d.id = c.dia_diem_id
+        ORDER BY d.id
     """
     cursor.execute(query)
     rows = fetch_all_dict(cursor, db_type)
     conn.close()
 
+    # Gom nhiều dòng giờ của cùng một địa điểm
+    grouped = {}
+    for r in rows:
+        g = grouped.setdefault(r["id"], {"row": r, "windows": []})
+        g["windows"].append((r["thu"], r["gio_mo_cua"], r["gio_dong_cua"]))
+
     all_points = []
     default_open = datetime.strptime("00:00", "%H:%M").time()
     default_close = datetime.strptime("23:59", "%H:%M").time()
 
-    for r in rows:
-        open_time = r["gio_mo_cua"] if r["gio_mo_cua"] else default_open
-        close_time = r["gio_dong_cua"] if r["gio_dong_cua"] else default_close
+    for pid, g in grouped.items():
+        r, wins = g["row"], g["windows"]
+        if bo_diem_dong_cua and r.get("trang_thai_du_lieu") == "da_dong_cua":
+            continue
 
+        wins = [w for w in wins if w[1] or w[2]]          # bỏ dòng LEFT JOIN rỗng
+        every_day = [w for w in wins if w[0] is None]
+        per_day = [w for w in wins if w[0] is not None]
+        if not wins:
+            o, c = None, None                              # chưa có dữ liệu giờ -> mở cả ngày
+        elif weekday is not None:
+            match = [w for w in per_day if int(w[0]) == weekday] or every_day
+            if not match:
+                continue                                   # hôm đó nghỉ -> loại khỏi tập ứng viên
+            o, c = match[0][1], match[0][2]
+        else:
+            (o, c), _ = Counter((w[1], w[2]) for w in (every_day or per_day)).most_common(1)[0]
+
+        open_time = o if o else default_open
+        close_time = c if c else default_close
         if isinstance(open_time, str): open_time = datetime.strptime(open_time[:5], "%H:%M").time()
         if isinstance(close_time, str): close_time = datetime.strptime(close_time[:5], "%H:%M").time()
 
-        point_data = {
+        all_points.append({
             "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"],
             "time": r["thoi_gian_tham_quan_phut"], "score": r["diem_gia_tri"], "loai_hinh": r["loai_hinh"],
             "open_time": open_time, "close_time": close_time,
@@ -790,8 +836,7 @@ def fetch_all_points(vehicle_type: str = None):
             "phu_hop": r["phu_hop"] or "",
             "url_hinh_anh": r["url_hinh_anh"] or "",
             "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
-        }
-        all_points.append(point_data)
+        })
 
     if vehicle_type:
         max_access = VEHICLE_ACCESS_LEVEL.get(vehicle_type, 3)
@@ -1024,7 +1069,7 @@ def run_route_generation(request: OptimizationRequest,
         raise HTTPException(status_code=400, detail="Lỗi định dạng thời gian (start_time/end_time phải theo dạng HH:MM)")
 
     # 3. LẤY DANH SÁCH ĐỊA ĐIỂM TỪ DATABASE
-    all_points = fetch_all_points()
+    all_points = fetch_all_points(trip_date=base_date)
 
     # 3b. LỌC ĐỊA ĐIỂM THEO KHẢ NĂNG TIẾP CẬN CỦA PHƯƠNG TIỆN
     max_access = VEHICLE_ACCESS_LEVEL.get(request.vehicle_type, 3)
