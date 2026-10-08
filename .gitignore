@@ -2,3 +2,5 @@ venv/
 __pycache__/
 .vscode/
 *.pyc
+osrm_cache.sqlite
+absa_cache.json

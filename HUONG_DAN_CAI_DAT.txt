@@ -1,0 +1,29 @@
+CÁC FILE ĐÃ THÊM / SỬA – Hybrid AI Du Lịch Thông Minh
+=====================================================
+
+Cấu trúc patch (giống thư mục gốc dự án):
+
+  main.py                          ← đã thêm endpoint POST /api/parse-prompt
+  README.md                        ← cập nhật hướng dẫn experiment + parser
+  run_experiments.py               ← MỚI: script chạy 30 test cases → Bảng 1 & 2
+  services/parser.py               ← MỚI: LLM-as-Parser (Module 1 Semantic Engine)
+  experiments/TABLE1.md            ← kết quả smoke (Bảng 1)
+  experiments/TABLE2.md            ← kết quả smoke (Bảng 2)
+  experiments/results.json         ← raw metrics
+
+CÁCH GỘP VÀO PROJECT GỐC
+------------------------
+1. Giải nén ZIP này vào thư mục gốc dự án (overwrite main.py, README.md)
+2. Đảm bảo thư mục services/ đã có (có sẵn trong project gốc)
+3. Chạy thử:
+
+   python test_research_modules.py
+   python run_experiments.py --quick --cases 6
+
+4. Chạy full 30 cases cho paper:
+
+   python run_experiments.py
+
+Endpoint mới:
+  POST /api/parse-prompt
+  Body: { "prompt": "Tôi muốn đi tour 6 tiếng, thích chụp ảnh, tránh đông" }

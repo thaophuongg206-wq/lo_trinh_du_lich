@@ -41,8 +41,9 @@ def _fake_matrix(points_list, vehicle_type="xe_may"):
     return m
 
 
-main.get_global_osrm_matrix = _fake_matrix
-main.get_weather_factor = lambda lat, lon: 1.0
+import api.osrm_matrix, api.factors
+api.osrm_matrix.get_global_osrm_matrix = _fake_matrix
+api.factors.get_weather_factor = lambda lat, lon: 1.0
 
 client = TestClient(main.app)
 

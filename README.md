@@ -1,25 +1,103 @@
-# Dự Án: Hệ thống Tư vấn & Tối ưu Lộ trình Du lịch Thông Minh
+# Smart Travel Itinerary Decision Support System
 
-Dự án cung cấp giải pháp lập kế hoạch du lịch toàn diện, kết hợp AI tạo sinh (Local LLM) để tư vấn hành trình và thuật toán Quy hoạch động (Bitmask DP) / Heuristic để tối ưu đường đi theo thời gian thực (tránh kẹt xe, khung giờ cấm).
+Hybrid AI framework for the Tourist Trip Design Problem (TTDP):
+Local LLM (Ollama) for ABSA / parsing / narrative + Dual-Mode mathematical optimizer.
 
-## 🛠 Cấu trúc hệ thống & Luồng hoạt động
+## Architecture (4 layers)
 
-Dự án được chia thành 4 bước chạy nối tiếp nhau:
+1. **Presentation** – `index.html` / `app.js`
+2. **Semantic & LLM** – Ollama (Parser, ABSA, Narrative)
+3. **Optimization** – Hybrid NSGA-II (pre-tour) + Greedy 2-opt (in-tour)
+4. **Data & API** – SerpApi, OSRM, TomTom, Open-Meteo, Crowd predictor
 
-### Bước 1: Thu thập dữ liệu sạch (Data Pipeline)
-- Chạy `python crawl_serpapi_maps.py` để lấy rating, reviews mới nhất và link ảnh độ phân giải cao từ Google Maps (lưu ra file `places_output.csv`).
+## Algorithms
 
-### Bước 2: Nhập & Tiền xử lý Dữ liệu (Database)
-- Khởi động backend, sử dụng Admin Tool trên giao diện Frontend để upload file CSV/Excel vào CSDL SQLite (`dulich.db`).
-- Chạy `python clean_data.py` để loại bỏ HTML rác, khoảng trắng thừa, chuẩn bị "nguyên liệu sạch" cho AI phân tích.
+| File | Role |
+|------|------|
+| `main.py` | Production FastAPI app + research endpoints |
+| `hybrid_nsga.py` | Hybrid NSGA-II (Greedy seeds + 2-opt + NSGA-II, 3 objectives) |
+| `OnlyNSGA.py` | Standard NSGA-II baseline |
+| `replan_engine.py` | In-tour Greedy + 2-opt, crossing count, constraint checks |
+| `absa_service.py` | Review → SABSA (Ollama + lexical fallback) |
+| `services/parser.py` | **LLM-as-Parser**: free-text prompt → JSON constraints |
+| `services/serpapi.py` | Reviews, Popular Times, opening hours |
+| `services/osrm.py` | Distance / duration matrix (OSRM + Haversine fallback) |
+| `services/narrative.py` | LLM-as-Storyteller itinerary narrative |
+| `services/ollama.py` | Shared Ollama client |
+| `tomtom_service.py` | Real-time traffic factor |
+| `weather_service.py` | Timestamp-aware Open-Meteo hourly weather |
+| `crowd_prediction.py` | Gradient Boosting crowd forecast (or temporal baseline) |
+| `evaluation.py` | Hypervolume, OL, flow conservation, batch summary |
+| `run_experiments.py` | **Research experiment runner** → Table 1 & Table 2 |
 
-### Bước 3: Khởi động Trợ lý AI (LLM & RAG)
-- Chạy file `setup_ai.bat` (yêu cầu máy có cài Docker).
-- Hệ thống sẽ tự động khởi tạo server Ollama và pull model `llama3.2`. 
-- API nội bộ sẽ chạy tại: `http://localhost:11434`
+## Main research endpoints
 
-### Bước 4: Khởi động Máy chủ Tối ưu (FastAPI Backend)
-Yêu cầu cài đặt thư viện: `pip install fastapi uvicorn requests pyodbc pandas openpyxl`
-- Chạy lệnh khởi động: 
-  ```bash
-  uvicorn main:app --reload
+- `POST /api/optimize-route-hybrid` – 3-objective Pareto (experience, time, crowd+weather)
+- `POST /api/replan` – In-tour Greedy 2-opt (< 0.1 s target), reports OL before/after
+- `POST /api/parse-prompt` – LLM-as-Parser (prompt → JSON constraints)
+- `POST /api/narrative` – Natural-language itinerary guide
+- `POST /api/absa` – Single-review ABSA
+- `POST /api/serpapi-enrich` – Debug SerpApi enrichment
+- `GET  /api/dynamic-signals` – TomTom + Open-Meteo snapshot
+- `GET  /api/crowd-forecast` – Crowd index at place/time
+
+## Objectives (Hybrid NSGA-II)
+
+1. **Max** experience = `w_pref * SABSA + (1 - w_pref) * Rating`
+2. **Min** total trip time (travel + visit + waiting)
+3. **Min** crowd + weather penalty
+
+## Environment
+
+Copy `.env.example` and fill keys as needed:
+
+```text
+TOMTOM_API_KEY=...
+SERPAPI_KEY=...          # optional; synthetic fallback is labelled
+ABSA_OLLAMA_ENABLED=1
+HYBRID_POP_SIZE=40
+HYBRID_GENERATIONS=60
+```
+
+## Crowd data
+
+`crowd_history.csv` ships with synthetic observations so GradientBoosting can train.
+Replace with real `(place_id, timestamp, crowd_index)` rows for production research.
+
+## Run the API
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+For the pure NSGA-II baseline:
+
+```bash
+uvicorn OnlyNSGA:app --reload --port 8000
+```
+
+## Run research experiments (Table 1 & Table 2)
+
+```bash
+# Full 30 test cases (pop=40, gen=50) – several minutes
+python run_experiments.py
+
+# Quick smoke test
+python run_experiments.py --quick --cases 6
+```
+
+Outputs:
+
+- `experiments/results.json` – raw per-case metrics
+- `experiments/TABLE1.md` – Main Results comparison
+- `experiments/TABLE2.md` – Ablation Study
+
+Smoke tests for research modules:
+
+```bash
+python test_research_modules.py
+```
+
+## Cấu trúc sau refactor
+`main.py` chỉ lắp ráp app. `api/` = tầng HTTP (db, schemas, factors, scheduling, generation, routers/core|research). `core/` = thuật toán dùng chung: `timeline` (một bộ mô phỏng đi→chờ→thăm), `objectives` (3 mục tiêu + `ObjectiveScaler`), `nsga2` (engine), `audit` (ghi nhận mọi lần dùng fallback, trả về trong `data_quality`). `config.py` = mọi tham số (ghi đè bằng env). `OnlyNSGA.py` = baseline NSGA-II gọi cùng `hybrid_nsga.run` với seeds/2-opt tắt.

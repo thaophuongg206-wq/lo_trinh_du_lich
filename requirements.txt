@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+requests
+pandas
+numpy
+pyodbc
+openpyxl
+scikit-learn

@@ -106,7 +106,7 @@ _REMOVE_INTENT_KEYWORDS = (
 
 def _has_remove_intent(instruction: str) -> bool:
     try:
-        from main import _strip_diacritics
+        from api.preferences import _strip_diacritics
         text = _strip_diacritics(instruction or "")
     except Exception:
         text = (instruction or "").lower()
@@ -138,7 +138,7 @@ def select_context_points(all_points: list, user_preference: str) -> list:
         return []
 
     try:
-        from main import _extract_keywords, calculate_preference_score
+        from api.preferences import _extract_keywords, calculate_preference_score
         keywords = _extract_keywords(user_preference)
 
         def relevance(p):
@@ -193,7 +193,7 @@ PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hiểu s�
 
 5. RÀNG BUỘC ĐẦU RA JSON — TRẢ VỀ DUY NHẤT MỘT OBJECT JSON SAU, KHÔNG DÙNG MARKDOWN:
 {{
-  "advice_text": "Đoạn văn mở đầu chào hỏi, đánh giá chung về không khí du lịch của khu vực và sự phù hợp với sở thích của người dùng (khoảng 2-3 câu). TUYỆT ĐỐI KHÔNG mô tả chi tiết lịch trình ở đây vì nó sẽ dùng làm lời giới thiệu tổng quan (khoảng 3-4 câu tinh tế, không chứa bất kỳ ID nào).",
+  "advice_text": "Đoạn văn hoàn chỉnh, truyền cảm hứng, kể câu chuyện liền mạch cho cả hành trình như một bức tranh trải nghiệm sống động (khoảng 3-4 câu tinh tế, không chứa bất kỳ ID nào).",
   "timeline": [
     {{
       "period": "morning",
@@ -526,7 +526,7 @@ def parse_refine_response(raw: str, valid_ids: set, current_ids: list = None) ->
 @router.post("/api/ai-suggest", response_model=AISuggestResponse)
 def suggest_route(req: AISuggestRequest):
     """Endpoint chính xử lý yêu cầu tư vấn lộ trình từ người dùng."""
-    from main import fetch_all_points
+    from api.db import fetch_all_points
 
     # Tính toán thời gian thực tế
     try:
@@ -586,7 +586,7 @@ def refine_route(req: AIRefineRequest):
     câu lệnh tự do của người dùng ('Bỏ C đi', 'Thêm quán ăn trưa'...), trả về
     tập id đã cập nhật. Frontend gọi lại /api/optimize-route với
     ai_selected_ids = suggested_ids để tính lại route/timeline/map."""
-    from main import fetch_all_points
+    from api.db import fetch_all_points
     from itinerary_store import store
 
     try:

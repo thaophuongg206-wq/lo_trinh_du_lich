@@ -395,3 +395,24 @@ UPDATE DIA_DIEM SET cap_do_tiep_can = 2 WHERE id IN (6, 7, 8, 9, 11, 17, 20, 21,
 
 -- Cấp 3 (Chỉ xe máy, xe đạp, đi bộ):
 UPDATE DIA_DIEM SET cap_do_tiep_can = 3 WHERE id IN (10, 12, 13, 14, 15, 16, 18, 19, 22);
+
+
+-- ============================================================
+-- DỮ LIỆU QUAN SÁT MẬT ĐỘ ĐÁM ĐÔNG (phục vụ mô hình dự báo)
+-- Thu thập từ API/nguồn quan sát thực tế, KHÔNG sinh dữ liệu giả.
+-- crowd_index chuẩn hoá 0..1.
+-- ============================================================
+IF OBJECT_ID('dbo.CROWD_OBSERVATION', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.CROWD_OBSERVATION (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        dia_diem_id INT NOT NULL,
+        observed_at DATETIME2 NOT NULL,
+        crowd_index DECIMAL(5,4) NOT NULL,
+        source NVARCHAR(100) NULL,
+        CONSTRAINT CK_CROWD_OBSERVATION_INDEX CHECK (crowd_index >= 0 AND crowd_index <= 1),
+        CONSTRAINT FK_CROWD_OBSERVATION_LOCATION FOREIGN KEY (dia_diem_id) REFERENCES DIA_DIEM(id)
+    );
+    CREATE INDEX IX_CROWD_OBSERVATION_PLACE_TIME
+        ON dbo.CROWD_OBSERVATION(dia_diem_id, observed_at);
+END;
