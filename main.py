@@ -23,9 +23,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
 
 from api.routers.core import router as core_router          # noqa: E402
 from api.routers.research import router as research_router  # noqa: E402
+from api.routers.itinerary import router as itinerary_router  # noqa: E402
 from ai_advisor import router as ai_router                  # noqa: E402
 
 app.include_router(core_router)
+app.include_router(itinerary_router)
 app.include_router(ai_router)
 app.include_router(research_router)
 
@@ -34,6 +36,24 @@ app.include_router(research_router)
 def health():
     from core import audit
     return {"status": "ok", "data_quality": audit.data_quality()}
+
+
+from fastapi.responses import FileResponse  # noqa: E402
+
+
+@app.get("/")
+def serve_index():
+    return FileResponse("index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/app.js")
+def serve_js():
+    return FileResponse("app.js", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/style.css")
+def serve_css():
+    return FileResponse("style.css", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # ---- backward-compatible names (old code did `from main import ...`) -------------------------

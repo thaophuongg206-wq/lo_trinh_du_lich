@@ -7,3 +7,5 @@ numpy
 pyodbc
 openpyxl
 scikit-learn
+python-dotenv
+httpx

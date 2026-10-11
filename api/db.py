@@ -95,6 +95,11 @@ def fetch_all_points(vehicle_type: str = None):
             "url_hinh_anh": r["url_hinh_anh"] or "",
             "cap_do_tiep_can": r["cap_do_tiep_can"] if r["cap_do_tiep_can"] is not None else 3,
         }
+        try:
+            from api.serpapi_cache import enrich_point_with_serpapi
+            point_data = enrich_point_with_serpapi(point_data)
+        except Exception:
+            pass
         all_points.append(point_data)
 
     if vehicle_type:

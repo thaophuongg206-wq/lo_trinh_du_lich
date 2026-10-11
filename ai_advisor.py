@@ -10,9 +10,9 @@ from pydantic import BaseModel
 router = APIRouter()
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2"       # Model 1B sieu nhe, toi uu rieng cho may tinh chay CPU
-OLLAMA_TIMEOUT = 180
-OLLAMA_TIMEOUT_SECONDS = 180
+OLLAMA_MODEL = "llama3.2:1b"       # Model 1B sieu nhe, toi uu rieng cho may tinh chay CPU
+OLLAMA_TIMEOUT = 12
+OLLAMA_TIMEOUT_SECONDS = 12
 
 # ============================================================
 # ĐỘNG HOÁ CONTEXT CHO AI (thay cho all_points[:15] cứng)
@@ -28,9 +28,9 @@ OLLAMA_TIMEOUT_SECONDS = 180
 # nếu đổi sang model có context lớn hơn (req.model khác), có thể nới
 # MAX_CONTEXT_CHARS/MAX_CANDIDATES mà không cần sửa logic.
 # ============================================================
-MIN_CANDIDATES = 15      # dưới ngưỡng này thì không cần cắt bớt, đưa hết vào prompt
-MAX_CANDIDATES = 60      # trần an toàn để tránh prompt phình quá lớn dù còn ngân sách ký tự
-MAX_CONTEXT_CHARS = 6000  # ngân sách ký tự ước lượng dành riêng cho phần liệt kê địa điểm
+MIN_CANDIDATES = 6       # dưới ngưỡng này thì không cần cắt bớt, đưa hết vào prompt
+MAX_CANDIDATES = 10      # trần an toàn để prompt gọn nhẹ, AI sinh phản hồi nhanh trong vài giây
+MAX_CONTEXT_CHARS = 1500  # ngân sách ký tự ước lượng tối ưu cho phản hồi nhanh
 
 
 class AISuggestRequest(BaseModel):
@@ -41,6 +41,8 @@ class AISuggestRequest(BaseModel):
     end_time: str 
     model: Optional[str] = None
     session_id: Optional[str] = None   # Nếu có, AI không được gợi ý điểm đã bị loại
+    trip_date: str = ""                # Ngày đi (YYYY-MM-DD), tùy chọn, làm bối cảnh cho prompt
+    start_point: str = ""              # Tên điểm xuất phát, tùy chọn, làm bối cảnh cho prompt
 
 
 class TimelinePlace(BaseModel):
@@ -77,6 +79,8 @@ class AIRefineRequest(BaseModel):
     instruction: str
     model: Optional[str] = None
     session_id: Optional[str] = None   # Để ghi excluded_ids vào state backend (mục 6)
+    trip_date: str = ""                # Ngày đi, tùy chọn, làm bối cảnh cho prompt
+    start_point: str = ""              # Tên điểm xuất phát, tùy chọn, làm bối cảnh cho prompt
 
 
 class AIRefineResponse(BaseModel):
@@ -117,7 +121,19 @@ def _line_for_point(p: dict) -> str:
     desc = (p.get("thong_tin_chi_tiet") or p.get("mo_ta") or "").strip()
     if len(desc) > 80:
         desc = desc[:80] + "..."
-    return f"- id={p['id']} | {p['ten']} | loại: {p.get('loai_hinh','?')} | mô tả: {desc}"
+    reviews = p.get("serpapi_reviews") or []
+    rev_snippet = ""
+    if reviews:
+        clean_rev = reviews[0].replace("\n", " ").strip()
+        if len(clean_rev) > 90:
+            clean_rev = clean_rev[:90] + "..."
+        rev_snippet = f" | Review thực tế: {clean_rev}"
+    elif p.get("review"):
+        clean_rev = p.get("review", "").replace("\n", " ").strip()
+        if len(clean_rev) > 70:
+            clean_rev = clean_rev[:70] + "..."
+        rev_snippet = f" | Review: {clean_rev}"
+    return f"- id={p['id']} | {p['ten']} | loại: {p.get('loai_hinh','?')} | mô tả: {desc}{rev_snippet}"
 
 
 def build_context_string(points: list) -> str:
@@ -144,6 +160,8 @@ def select_context_points(all_points: list, user_preference: str) -> list:
         def relevance(p):
             base = (p.get("score") or 0) / 10.0
             pref = calculate_preference_score(p, keywords)
+            if keywords and pref > 0.0:
+                return base * 0.2 + pref * 0.8
             return base * 0.5 + pref * 0.5
 
         ranked = sorted(all_points, key=relevance, reverse=True)
@@ -155,15 +173,22 @@ def select_context_points(all_points: list, user_preference: str) -> list:
     if len(ranked) <= MIN_CANDIDATES:
         return ranked
 
+    from categories import category_of
     selected = []
     total_chars = 0
+    cat_counts = {}
     for p in ranked:
+        p_cat = category_of(p)
+        # Giới hạn TTTM/rạp phim tối đa 2 điểm trong context để nhường chỗ cho cafe/ẩm thực/di tích
+        if p_cat == "tttm" and cat_counts.get("tttm", 0) >= 2:
+            continue
         line_len = len(_line_for_point(p)) + 1
         if len(selected) >= MIN_CANDIDATES and (
             total_chars + line_len > MAX_CONTEXT_CHARS or len(selected) >= MAX_CANDIDATES
         ):
             break
         selected.append(p)
+        cat_counts[p_cat] = cat_counts.get(p_cat, 0) + 1
         total_chars += line_len
     return selected
 
@@ -172,6 +197,7 @@ PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hiểu s�
 
 1. THÔNG TIN CHUYẾN ĐI:
 - Quỹ thời gian: {available_minutes} phút.
+{trip_context}
 - Sở thích / Tâm trạng: "{user_preference}"
 
 2. ĐỊNH LƯỢNG ĐIỂM ĐẾN BẮT BUỘC (Dựa trên {available_minutes} phút):
@@ -190,6 +216,7 @@ PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hiểu s�
   + Không lặp lại cùng một cấu trúc câu, tránh lối hành văn gượng gạo, hành chính.
   + Không nhồi nhét tên địa điểm liên tục; không biến đoạn văn thành danh sách gạch đầu dòng.
   + TUYỆT ĐỐI KHÔNG đưa ID nội bộ (như (id=27), [id: 6], ID=12...) vào bất kỳ đoạn văn nào (advice_text, description, reason). ID CHỈ ĐƯỢC PHÉP nằm trong trường "id" của JSON!
+  + TUYỆT ĐỐI KHÔNG chọn 2 rạp chiếu phim hay 2 TTTM trong cùng một ngày (chỉ đi xem phim / TTTM tối đa 1 lần).
 
 5. RÀNG BUỘC ĐẦU RA JSON — TRẢ VỀ DUY NHẤT MỘT OBJECT JSON SAU, KHÔNG DÙNG MARKDOWN:
 {{
@@ -247,6 +274,10 @@ REFINE_PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hi
 2. YÊU CẦU MỚI CỦA BẠN:
 "{instruction}"
 
+Bối cảnh chuyến đi (hãy tôn trọng khi điều chỉnh):
+{trip_context}
+- Sở thích chung của chuyến đi: "{user_preference}"
+
 3. KHO DỮ LIỆU ĐỊA ĐIỂM CÓ THỂ CHỌN THÊM (chỉ được chọn id trong danh sách này):
 {context}
 
@@ -271,24 +302,66 @@ REFINE_PROMPT_TEMPLATE = """Bạn là một người bạn địa phương am hi
 TRẢ LỜI:"""
 
 
-def build_prompt(context: str, user_preference: str, available_minutes: int) -> str:
+VEHICLE_LABELS = {
+    "xe_may": "Xe máy",
+    "o_to": "Ô tô",
+    "xe_16_cho": "Xe 16 chỗ",
+    "xe_29_cho": "Xe 29 chỗ",
+    "di_bo": "Đi bộ",
+    "xe_dap": "Xe đạp",
+}
+
+
+def build_trip_context(start_time: str = "", end_time: str = "", vehicle_type: str = "",
+                       trip_date: str = "", start_point: str = "") -> str:
+    """Dựng các dòng bối cảnh chuyến đi (giờ, ngày, xe, điểm xuất phát) cho prompt.
+    Thông tin nào trống thì bỏ qua dòng đó, không bịa giá trị mặc định."""
+    lines = []
+    if trip_date:
+        lines.append(f"- Ngày đi: {trip_date}")
+    if start_time and end_time:
+        lines.append(f"- Giờ đi: từ {start_time} đến {end_time}")
+    if vehicle_type:
+        lines.append(f"- Phương tiện: {VEHICLE_LABELS.get(vehicle_type, vehicle_type)}")
+    if start_point:
+        lines.append(f"- Điểm xuất phát: {start_point}")
+    return "\n".join(lines) if lines else "- (Chưa có thêm thông tin)"
+
+
+def build_prompt(context: str, user_preference: str, available_minutes: int, trip_context: str = "") -> str:
     """Tạo prompt với quy tắc định lượng thời gian và ngữ cảnh dữ liệu."""
-    if available_minutes < 180:
+    try:
+        from services.parser import _extract_tags, _normalize_typos, _low, _strip
+        norm_pref = _normalize_typos(user_preference or "")
+        liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
+    except Exception:
+        liked = []
+
+    if liked and len(liked) <= 2:
+        target_count = min(3, max(2, len(liked)))
+        rule = (
+            f"- Người dùng chỉ có nhu cầu trải nghiệm cụ thể ({user_preference}), "
+            f"HÃY CHỌN ĐÚNG {target_count} địa điểm phù hợp nhất, nhịp độ thong thả. "
+            f"TUYỆT ĐỐI KHÔNG tự ý chọn thêm các địa điểm ngoài sở thích (như quán ăn, di tích)."
+        )
+    elif available_minutes < 180:
         rule = "- Do thời gian ngắn (dưới 3 tiếng), HÃY CHỌN 2 đến 3 địa điểm."
     elif 180 <= available_minutes <= 360:
         rule = "- Thời gian lý tưởng (3 đến 6 tiếng), HÃY CHỌN 4 đến 5 địa điểm."
     else:
-        rule = "- Quỹ thời gian dư dả (trên 6 tiếng), HÃY CHỌN 6 đến 8 địa điểm."
+        rule = "- Quỹ thời gian dư dả (trên 6 tiếng), HÃY CHỌN 5 đến 7 địa điểm."
 
     return PROMPT_TEMPLATE.format(
         available_minutes=available_minutes,
         user_preference=user_preference,
         quantification_rule=rule,
-        context=context
+        context=context,
+        trip_context=trip_context or "- (Chưa có thêm thông tin)",
     )
 
 
-def build_refine_prompt(context: str, current_points: list, instruction: str) -> str:
+def build_refine_prompt(context: str, current_points: list, instruction: str,
+                        trip_context: str = "", user_preference: str = "") -> str:
     itinerary_lines = "\n".join(
         f"- id={p['id']} | {p['ten']} | loại: {p.get('loai_hinh','?')}" for p in current_points
     )
@@ -296,6 +369,8 @@ def build_refine_prompt(context: str, current_points: list, instruction: str) ->
         current_itinerary=itinerary_lines or "(chưa có điểm nào)",
         instruction=instruction,
         context=context,
+        trip_context=trip_context or "- (Chưa có thêm thông tin)",
+        user_preference=user_preference or "(chưa nêu)",
     )
 
 
@@ -305,11 +380,16 @@ def call_ai_service(prompt: str, model: str = OLLAMA_MODEL) -> str:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model": model,
+                "model": model or OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
                 "format": "json", 
-                "options": {"temperature": 0.2}, 
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 180,
+                    "num_ctx": 1536,
+                    "num_thread": 4,
+                }, 
             },
             timeout=OLLAMA_TIMEOUT,
         )
@@ -364,16 +444,65 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
     if not context_points:
         return "Mình rất tiếc chưa tìm được địa điểm phù hợp trong khu vực này.", [], [], "", []
 
-    # Chọn số lượng điểm theo quỹ thời gian
-    if available_minutes < 180:
+    try:
+        from services.parser import _extract_tags, _normalize_typos, _low, _strip
+        norm_pref = _normalize_typos(user_preference or "")
+        liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
+    except Exception:
+        liked = []
+
+    # Chọn số lượng điểm theo sở thích cụ thể hoặc quỹ thời gian
+    if liked and len(liked) <= 2:
+        target_count = min(3, max(2, len(liked)))
+    elif available_minutes < 180:
         target_count = min(3, len(context_points))
     elif available_minutes <= 360:
         target_count = min(5, len(context_points))
     else:
         target_count = min(7, len(context_points))
-    target_count = max(2, target_count)
+    target_count = max(2, min(target_count, len(context_points)))
 
-    chosen = context_points[:target_count]
+    from categories import category_of
+    cat_map = {
+        'cafe': 'cafe', 'entertainment': 'tttm', 'shopping': 'tttm',
+        'food': 'an_uong', 'culture': 'tham_quan', 'nature': 'tham_quan', 'photo': 'checkin'
+    }
+    liked_cats = {cat_map[t] for t in liked if t in cat_map}
+
+    if liked_cats:
+        prioritized_points = [p for p in context_points if category_of(p) in liked_cats] + \
+                             [p for p in context_points if category_of(p) not in liked_cats]
+    else:
+        prioritized_points = context_points
+
+    chosen = []
+    cat_counts = {}
+    fallback_caps = {
+        "tttm": 1,
+        "cafe": 2 if ("cafe" in liked and len(liked) == 1) else 1,
+        "an_uong": 1,
+        "tham_quan": 2,
+        "checkin": 1,
+    }
+
+    # Ưu tiên lấy điểm phù hợp, không bao giờ lấy quá 1 rạp phim / TTTM
+    for p in prioritized_points:
+        if len(chosen) >= target_count:
+            break
+        p_cat = category_of(p)
+        limit = fallback_caps.get(p_cat, 2)
+        if cat_counts.get(p_cat, 0) < limit:
+            chosen.append(p)
+            cat_counts[p_cat] = cat_counts.get(p_cat, 0) + 1
+
+    # Nếu sau khi lọc quota vẫn chưa đủ và còn điểm khác:
+    if len(chosen) < min(2, len(context_points)):
+        for p in context_points:
+            if p not in chosen and category_of(p) != "tttm":
+                chosen.append(p)
+                if len(chosen) >= min(target_count, 2):
+                    break
+
     suggested_ids = [p["id"] for p in chosen]
 
     # Phân bổ các điểm vào các mốc thời gian
@@ -485,11 +614,19 @@ def parse_structured_response(raw: str, valid_ids: set, context_points: list = N
                 advice_parts.append(period["description"])
         advice_text = sanitize_ai_text("\n\n".join(advice_parts).strip())
 
-    # Loại id trùng lặp nhưng giữ đúng thứ tự xuất hiện đầu tiên
+    # Loại id trùng lặp và giới hạn tối đa 1 rạp phim / TTTM
+    from categories import category_of
+    id_map = {p["id"]: p for p in (context_points or [])}
     seen = set()
+    cat_counts = {}
     suggested_ids = []
     for pid in ordered_ids:
         if pid not in seen:
+            p_obj = id_map.get(pid)
+            p_cat = category_of(p_obj) if p_obj else ""
+            if p_cat == "tttm" and cat_counts.get("tttm", 0) >= 1:
+                continue
+            cat_counts[p_cat] = cat_counts.get(p_cat, 0) + 1
             seen.add(pid)
             suggested_ids.append(pid)
 
@@ -560,7 +697,10 @@ def suggest_route(req: AISuggestRequest):
     # Xây dựng prompt và gọi service với fallback an toàn
     try:
         context = build_context_string(context_points)
-        prompt = build_prompt(context, req.user_preference, available_minutes)
+        trip_context = build_trip_context(
+            req.start_time, req.end_time, req.vehicle_type, req.trip_date, req.start_point
+        )
+        prompt = build_prompt(context, req.user_preference, available_minutes, trip_context=trip_context)
         raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
         advice_text, suggested_ids, invalid_ids, summary, timeline = parse_structured_response(
             raw_response, valid_ids_set, context_points, available_minutes, req.user_preference
@@ -624,7 +764,13 @@ def refine_route(req: AIRefineRequest):
 
     try:
         context = build_context_string(context_points)
-        prompt = build_refine_prompt(context, current_points, req.instruction)
+        trip_context = build_trip_context(
+            req.start_time, req.end_time, req.vehicle_type, req.trip_date, req.start_point
+        )
+        prompt = build_refine_prompt(
+            context, current_points, req.instruction,
+            trip_context=trip_context, user_preference=req.user_preference,
+        )
         raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
         advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set, req.current_ids)
     except Exception:

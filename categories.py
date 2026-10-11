@@ -14,8 +14,14 @@ import math
 import unicodedata
 from typing import Dict, Iterable, List, Optional
 
-_MAP = {"cafe": "cafe", "an uong": "an_uong", "tttm": "tttm"}
-CAPPED = ("an_uong", "cafe", "tttm")
+_MAP = {
+    "cafe": "cafe",
+    "an uong": "an_uong",
+    "tttm": "tttm",
+    "tham quan": "tham_quan",
+    "checkin": "checkin",
+}
+CAPPED = ("an_uong", "cafe", "tttm", "tham_quan", "checkin")
 
 
 def _fold(s: str) -> str:

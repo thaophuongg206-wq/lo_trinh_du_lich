@@ -57,7 +57,9 @@ class OSRMCache:
     """
 
     def __init__(self, path: Optional[str] = None, ttl_days: float = 30.0):
-        self.path = path or os.getenv("OSRM_CACHE_PATH", "osrm_cache.sqlite")
+        import tempfile
+        default_path = os.path.join(tempfile.gettempdir(), "osrm_cache.sqlite")
+        self.path = path or os.getenv("OSRM_CACHE_PATH", default_path)
         self.ttl = ttl_days * 86400
         self._mem: Dict[tuple, Tuple[float, float, float]] = {}
         self._lock = threading.Lock()

@@ -99,6 +99,41 @@ def run_route_generation(request: OptimizationRequest,
     for p in all_points:
         p["preference_score"] = calculate_preference_score(p, preference_keywords)
 
+    # 3d. TRÍCH XUẤT SỞ THÍCH CÓ CẤU TRÚC (TAGS) ĐỂ THÍCH ỨNG LỘ TRÌNH
+    from services.parser import _extract_tags, _normalize_typos, _low, _strip
+    norm_pref = _normalize_typos(request.user_preference or "")
+    preferred_tags, avoid_tags = _extract_tags(_low(norm_pref), _strip(norm_pref))
+
+    has_specific_prefs = bool(preferred_tags and len(preferred_tags) <= 2)
+    has_food = "food" in preferred_tags
+    has_culture = ("culture" in preferred_tags) or ("nature" in preferred_tags)
+    has_cafe = "cafe" in preferred_tags
+    has_ent = ("entertainment" in preferred_tags) or ("shopping" in preferred_tags)
+    has_photo = "photo" in preferred_tags
+    is_cafe_tour = any(kw in norm_pref for kw in ("cafe tour", "tour cafe", "cac quan cafe", "nhieu quan cafe", "cafe hopping"))
+
+    # Tập loại hình bắt buộc phải có mặt trong mọi route nếu người dùng yêu cầu 1-2 hoạt động cụ thể
+    req_cats = set()
+    if has_specific_prefs and mode != "single":
+        if has_ent:
+            req_cats.add("tttm")
+        if has_culture:
+            req_cats.add("tham_quan")
+        if has_cafe:
+            req_cats.add("cafe")
+        if has_food:
+            req_cats.add("an_uong")
+
+    # Pacing thong thả: khi người dùng chỉ yêu cầu 1-2 hoạt động cụ thể nhưng quỹ giờ dài (>= 4 tiếng)
+    is_relaxed_pacing = bool(has_specific_prefs and available_minutes >= 240)
+    if is_relaxed_pacing:
+        for p in all_points:
+            lh = (p.get("loai_hinh") or "").strip()
+            if lh == "TTTM":
+                p["time"] = max(p.get("time") or 0, 150)  # 2.5 tiếng xem phim & dạo mall
+            elif lh == "Cafe":
+                p["time"] = max(p.get("time") or 0, 90)   # 1.5 tiếng cafe thư giãn
+
     # 4. LẤY MA TRẬN KHOẢNG CÁCH THEO PHƯƠNG TIỆN (vehicle_type)
     global_matrix = osrm_matrix.get_global_osrm_matrix(all_points, vehicle_type=request.vehicle_type)
 
@@ -288,9 +323,32 @@ def run_route_generation(request: OptimizationRequest,
 
         total_actual = (simulated_clock - clock_start).total_seconds() / 60
         route_pts = [selected_points[i] for i in best_route_indices]
-        avg_preference = sum(p.get("preference_score", 0.5) for p in route_pts) / len(route_pts)
 
+        # Chốt chặn bắt buộc: Nếu người dùng có sở thích cụ thể, lộ trình phải chứa đủ các sở thích đó
+        if req_cats:
+            covered_cats = {category_of(p) for p in route_pts if p["id"] != "gps_current"}
+            if not req_cats.issubset(covered_cats):
+                return None
+
+        # Chốt chặn cứng: Tuyệt đối không quá 1 điểm TTTM / rạp phim trong 1 lộ trình
+        tttm_count = sum(1 for p in route_pts if category_of(p) == "tttm" and p["id"] != "gps_current")
+        if tttm_count > 1:
+            return None
+
+        # Chốt chặn cứng: Tuyệt đối không quá 1 quán cafe khi có nhu cầu cụ thể (trừ khi cafe tour)
+        cafe_count = sum(1 for p in route_pts if category_of(p) == "cafe" and p["id"] != "gps_current")
+        if cafe_count > 1 and (has_specific_prefs or not is_cafe_tour):
+            return None
+
+        avg_preference = sum(p.get("preference_score", 0.5) for p in route_pts) / len(route_pts)
         covered_must = len([p for p in route_pts if p["id"] in must_visit_ids])
+
+        route_name = generate_route_name(route_pts, route_index, route_theme, request.user_preference)
+        saved_mins = available_minutes - total_actual
+        if is_relaxed_pacing and saved_mins >= 90:
+            early_note = f" · Thong thả {_fmt_minutes(total_actual)}"
+            if early_note not in route_name:
+                route_name += early_note
 
         return {
             "dropped_point": dropped_point,
@@ -299,17 +357,56 @@ def run_route_generation(request: OptimizationRequest,
             "trip_date": str(base_date),
             "strategy": route_label,
             "theme": route_theme,
-            "route_name": generate_route_name(route_pts, route_index, route_theme, request.user_preference),
+            "route_name": route_name,
             "avg_preference_score": round(avg_preference, 3),
             "must_visit_covered": covered_must,
             "must_visit_total": len(must_visit_ids),
             "optimized_route": final_route_details
         }
 
-    def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn,
-                                   must_visit_ids=None):
+    from categories import category_of
+
+    def _get_category_caps(hours: float, theme: str = "") -> dict:
+        """Tối đa số điểm của mỗi loại hình trong 1 lộ trình (chống lặp 3, 4 quán cafe).
+        - cafe: tối đa 1 quán (<= 6h), tối đa 2 quán (> 6h)
+        - an_uong: tối đa 1 quán (<= 5h), tối đa 2 quán (> 5h)
+        - tttm: tối đa 1 điểm
         """
-        Greedy builder với scorer tùy chỉnh.
+        cafe_cap = 2 if is_cafe_tour else (1 if (has_specific_prefs or hours <= 8.0) else 2)
+        food_cap = 1 if (has_specific_prefs or hours <= 6.0) else 2
+        caps = {
+            "cafe": cafe_cap,
+            "an_uong": food_cap,
+            "tttm": 1,
+            "tham_quan": 2 if has_specific_prefs else 3,
+            "checkin": 1 if has_specific_prefs else 2,
+        }
+        # Thích ứng theo sở thích người dùng: không tự ý nhồi ẩm thực/di tích nếu không được yêu cầu
+        if preferred_tags:
+            if not has_food:
+                caps["an_uong"] = 0
+            if not has_culture and len(preferred_tags) <= 2:
+                caps["tham_quan"] = 0
+            if not has_photo and not has_culture and len(preferred_tags) <= 2:
+                caps["checkin"] = 0
+            if not has_cafe:
+                caps["cafe"] = 0
+            elif has_cafe:
+                caps["cafe"] = 2 if is_cafe_tour else 1
+            if has_ent:
+                caps["tttm"] = 1
+            if has_ent and has_culture:
+                caps["tham_quan"] = 2
+                caps["tttm"] = 1
+            if has_ent and has_cafe:
+                caps["tttm"] = 1
+                caps["cafe"] = 1
+        return caps
+
+    def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn,
+                                   must_visit_ids=None, theme=""):
+        """
+        Greedy builder với scorer tùy chỉnh và ràng buộc quota loại hình.
         score_fn(last_point, candidate, dist_km) -> float  (nhỏ hơn = ưu tiên hơn)
         end_clock: thời điểm kết thúc tối đa (clock_end hoặc fake ngắn hơn).
         must_visit_ids: tập ID điểm bắt buộc ghé (từ AI), được ưu tiên tuyệt đối.
@@ -327,6 +424,21 @@ def run_route_generation(request: OptimizationRequest,
             return None
         selected  = [origin]
 
+        trip_hours = available_minutes / 60.0
+        cat_caps = _get_category_caps(trip_hours, theme)
+        max_total_stops = None
+        if has_specific_prefs:
+            if has_ent and has_cafe:
+                max_total_stops = 2  # Đúng 1 rạp phim + 1 quán cafe!
+            elif has_cafe and has_food:
+                max_total_stops = 2  # Đúng 1 quán cafe + 1 quán ăn!
+            elif has_ent and has_culture:
+                max_total_stops = 3  # 1 rạp phim + 2 di tích
+            elif len(preferred_tags) == 1:
+                max_total_stops = 1 if (has_cafe or has_ent) else 2
+            else:
+                max_total_stops = 2 if trip_hours <= 8.0 else 3
+
         # ── CANDIDATE POOL CỦA GREEDY (mục 7) ──
         # Chốt chặn thứ hai, cố ý trùng với bộ lọc ở bước 3b': kể cả khi sau này
         # có ai đó truyền thẳng một pool chưa lọc vào hàm này, điểm đã bị loại
@@ -337,13 +449,57 @@ def run_route_generation(request: OptimizationRequest,
             if p["id"] not in used_ids
             and p["id"] not in excluded_ids
         ]
+        # Nếu có req_cats, đảm bảo unvisited luôn có ứng viên thuộc các req_cats
+        if req_cats:
+            unvisited_ids = {p["id"] for p in unvisited}
+            missing_req_cands = [
+                p for p in all_points
+                if p["id"] not in used_ids
+                and p["id"] not in excluded_ids
+                and p["id"] not in unvisited_ids
+                and category_of(p) in req_cats
+            ]
+            unvisited.extend(missing_req_cands)
         while True:
+            cur_cats = {category_of(x) for x in selected[1:]}
+            missing_req = req_cats - cur_cats
+
+            # Nếu người dùng có nhu cầu cụ thể (1-2 hoạt động) và đã chọn đủ số điểm -> dừng sớm thong thả
+            # Chỉ dừng khi ĐÃ ĐỦ mọi loại hình bắt buộc!
+            if max_total_stops and (len(selected) - 1) >= max_total_stops and not missing_req:
+                break
+
+            remaining_slots = (max_total_stops - (len(selected) - 1)) if max_total_stops else None
+            must_pick_req = bool(missing_req and remaining_slots is not None and remaining_slots <= len(missing_req))
+
             best_next  = None
             best_score = float('inf')
             best_dep   = departure
             for p in unvisited:
                 if p["id"] in used_ids or p["id"] in excluded_ids:
                     continue
+
+                p_cat = category_of(p)
+                cur_cat_count = sum(1 for x in selected[1:] if category_of(x) == p_cat)
+
+                # QUOTA CỨNG: Tuyệt đối không bao giờ đi 2 rạp phim / TTTM trong 1 lộ trình!
+                if p_cat == "tttm" and cur_cat_count >= 1:
+                    continue
+
+                # QUOTA CỨNG: Tuyệt đối không bao giờ đi 2 quán cafe trong 1 lộ trình khi có nhu cầu cụ thể!
+                if p_cat == "cafe" and cur_cat_count >= 1 and (has_specific_prefs or not is_cafe_tour):
+                    continue
+
+                # Nếu đang bắt buộc phải chọn loại hình còn thiếu để đủ quota:
+                if must_pick_req and p_cat not in missing_req:
+                    continue
+
+                # Giới hạn số lượng tối đa từng loại hình trong 1 route (chống 3, 4 quán cafe, 2 rạp phim)
+                # Chỉ điểm do người dùng chủ động force_visit_ids mới được bỏ qua cat_caps
+                if p["id"] not in force_visit_ids:
+                    if p_cat in cat_caps and cur_cat_count >= cat_caps[p_cat]:
+                        continue
+
                 dist = calc_dist(selected[-1], p)
                 est_travel = get_travel_minutes(selected[-1]["id"], p["id"], dist, global_matrix, k_weather, request.vehicle_type, departure)
                 est_visit  = p.get("time") or 0
@@ -354,6 +510,15 @@ def run_route_generation(request: OptimizationRequest,
                 nd         = sv + timedelta(minutes=est_visit)
                 if nd <= p_close and nd <= end_clock:
                     sc = score_fn(selected[-1], p, dist)
+
+                    # Ưu tiên cực mạnh loại hình người dùng yêu cầu mà route chưa có!
+                    if p_cat in missing_req:
+                        sc -= 60.0
+
+                    # Phạt nếu 2 điểm cùng loại hình đi liền nhau (ví dụ cafe kế cafe, ăn uống kế ăn uống)
+                    if len(selected) > 0 and p_cat in ("cafe", "an_uong", "tttm") and category_of(selected[-1]) == p_cat:
+                        sc += 25.0
+
                     # ƯU TIÊN PHÂN TẦNG:
                     #   force_visit (user vừa yêu cầu thêm) > must_visit (đang giữ) > phần còn lại.
                     # Nếu để force và must cùng một mức, khi quỹ giờ gần đầy Greedy sẽ
@@ -373,6 +538,12 @@ def run_route_generation(request: OptimizationRequest,
                 departure = best_dep
             else:
                 break
+
+        if req_cats:
+            covered_cats = {category_of(x) for x in selected[1:]}
+            if not req_cats.issubset(covered_cats):
+                return None
+
         return selected if len(selected) >= 2 else None
 
     # Biên độ (km-tương-đương) tối đa mà mức độ KHÔNG phù hợp preference có thể
@@ -455,13 +626,21 @@ def run_route_generation(request: OptimizationRequest,
                 # → ít điểm hơn, mỗi điểm lâu hơn, ít di chuyển hơn.
                 ("relax", pool_long,
                  lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05, 0.7),
+            ]
 
-                ("food", pool_food or base_unvisited,
-                 lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _FOOD_CATEGORIES else 0), 1.0),
+            if has_food or not preferred_tags:
+                strategies.append((
+                    "food", pool_food or base_unvisited,
+                    lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _FOOD_CATEGORIES else 0), 1.0
+                ))
 
-                ("culture", pool_cult or base_unvisited,
-                 lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _CULTURE_CATEGORIES else 0), 1.0),
+            if has_culture or not preferred_tags:
+                strategies.append((
+                    "culture", pool_cult or base_unvisited,
+                    lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _CULTURE_CATEGORIES else 0), 1.0
+                ))
 
+            strategies.extend([
                 # Khám phá: bắt đầu từ nửa xa của bản đồ → tập điểm lệch hẳn.
                 ("exploration", pool_far[: max(8, len(pool_far) // 2)],
                  lambda last, p, d: d / ((p.get("score") or 1) + 1), 1.0),
@@ -472,7 +651,7 @@ def run_route_generation(request: OptimizationRequest,
 
                 ("highlight", pool_value[: max(8, len(pool_value) // 2)],
                  lambda last, p, d: -(p.get("score") or 0) + d * 0.1, 1.0),
-            ]
+            ])
 
             for theme, pool, score_fn, ratio in strategies:
                 if not pool:
@@ -481,7 +660,7 @@ def run_route_generation(request: OptimizationRequest,
                 label = ROUTE_THEMES.get(theme, {}).get("label", theme)
                 try_add(
                     build_route_greedy_custom(origin, pool, k_weather, end_t, score_fn,
-                                              must_visit_ids=must_visit_ids),
+                                              must_visit_ids=must_visit_ids, theme=theme),
                     k_weather, label, theme
                 )
 

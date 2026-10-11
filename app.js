@@ -1,4 +1,10 @@
 $(document).ready(function () {
+    const API_BASE = (function () {
+        if (window.location.protocol === 'file:') return 'http://127.0.0.1:8000';
+        if (window.location.port === '8000') return '';
+        const host = window.location.hostname || '127.0.0.1';
+        return `${window.location.protocol}//${host}:8000`;
+    })();
     const map = L.map('map').setView([21.0285, 105.8542], 13);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap'
@@ -77,13 +83,19 @@ $(document).ready(function () {
         "Cafe":       { icon: "fa-mug-saucer",   color: "#8B5E3C" },
         "Ăn uống":    { icon: "fa-utensils",     color: "#E67E22" },
         "Tham quan":  { icon: "fa-landmark",     color: "#2D6A4F" },
-        "TTTM":       { icon: "fa-bag-shopping", color: "#5856D6" },
+        "TTTM":       { icon: "fa-film",         color: "#5856D6" },
         "Checkin":    { icon: "fa-camera",       color: "#FF3B30" },
         "diem_xuat_phat": { icon: "fa-flag",     color: "#2D3748" },
     };
 
     function categoryStyle(loaiHinh) {
         return CATEGORY_ICON[loaiHinh] || { icon: "fa-location-dot", color: "#4A5568" };
+    }
+
+    function formatCategoryLabel(loaiHinh) {
+        if (!loaiHinh) return '';
+        if (loaiHinh === 'TTTM') return 'Rạp phim & TTTM';
+        return loaiHinh;
     }
 
     function vehicleSentence(vType, distKm, mins) {
@@ -118,7 +130,8 @@ $(document).ready(function () {
     // ============================================================
     // SCREEN 1 → INPUT
     // ============================================================
-    $('#btn-use-location').click(function () {
+    $('#btn-use-location').click(function (e) {
+        if (e && e.preventDefault) e.preventDefault();
         const $status = $('#location-status');
         if (!navigator.geolocation) return $status.html('<span class="text-danger">Không hỗ trợ GPS</span>');
         $status.html('<span class="text-warning"><i class="fa-solid fa-spinner fa-spin"></i> Định vị...</span>');
@@ -128,13 +141,17 @@ $(document).ready(function () {
                 $('#start_point').val(`📍 Vị trí GPS hiện tại`);
                 $status.html('<span class="text-success"><i class="fa-solid fa-check"></i> Đã định vị</span>');
             },
-            () => $status.html('<span class="text-danger">Lỗi định vị</span>')
+            () => $status.html('<span class="text-danger">Lỗi định vị</span>'),
+            { timeout: 8000, enableHighAccuracy: true }
         );
     });
 
     $('#start_point').on('input', function () {
-        tripState.currentLocationData = null;
-        $('#location-status').empty();
+        const val = $(this).val().trim();
+        if (!val.includes('GPS') && !val.includes('📍')) {
+            tripState.currentLocationData = null;
+            $('#location-status').empty();
+        }
     });
 
     // Nhận diện chuỗi tọa độ: "21.0285, 105.8520" | "21.0285 105.8520"
@@ -152,23 +169,12 @@ $(document).ready(function () {
 
     function resolveStartAndRun(onReady) {
         const startPointText = $('#start_point').val().trim();
+        const isGpsText = startPointText.includes('GPS') || startPointText.includes('📍');
         const usingGPS = !!tripState.currentLocationData;
-        const fingerprint = usingGPS
-            ? `gps:${tripState.currentLocationData.lat},${tripState.currentLocationData.lon}`
-            : `text:${startPointText}`;
 
-        if (tripState.baseParams && tripState.startFingerprint === fingerprint) {
-            onReady({
-                start_lat: tripState.baseParams.start_lat,
-                start_lon: tripState.baseParams.start_lon,
-                start_point: tripState.baseParams.start_point,
-            });
-            return;
-        }
-
-        // 1. GPS
+        // 1. Đã có GPS trong State
         if (usingGPS) {
-            tripState.startFingerprint = fingerprint;
+            tripState.startFingerprint = `gps:${tripState.currentLocationData.lat},${tripState.currentLocationData.lon}`;
             onReady({
                 start_lat: tripState.currentLocationData.lat,
                 start_lon: tripState.currentLocationData.lon,
@@ -177,16 +183,56 @@ $(document).ready(function () {
             return;
         }
 
+        // 2. Ô input có chữ GPS / icon 📍 nhưng State chưa lưu (do reload trang hoặc autofill)
+        if (isGpsText) {
+            if (navigator.geolocation) {
+                $('#location-status').html('<span class="text-warning"><i class="fa-solid fa-spinner fa-spin"></i> Lấy GPS...</span>');
+                navigator.geolocation.getCurrentPosition(
+                    pos => {
+                        tripState.currentLocationData = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+                        $('#location-status').html('<span class="text-success"><i class="fa-solid fa-check"></i> Đã định vị</span>');
+                        onReady({
+                            start_lat: pos.coords.latitude,
+                            start_lon: pos.coords.longitude,
+                            start_point: ''
+                        });
+                    },
+                    () => {
+                        console.warn("Không lấy được GPS tự động, fallback về trung tâm Hà Nội (Hồ Hoàn Kiếm)");
+                        $('#location-status').html('<span class="text-muted">(Dùng trung tâm HN)</span>');
+                        onReady({
+                            start_lat: 21.0285,
+                            start_lon: 105.8542,
+                            start_point: 'Hồ Hoàn Kiếm, Hà Nội'
+                        });
+                    },
+                    { timeout: 4000 }
+                );
+                return;
+            } else {
+                onReady({
+                    start_lat: 21.0285,
+                    start_lon: 105.8542,
+                    start_point: 'Hồ Hoàn Kiếm, Hà Nội'
+                });
+                return;
+            }
+        }
+
         if (!startPointText) {
-            alert('Vui lòng nhập điểm xuất phát hoặc bấm Dùng GPS.');
-            onReady(null);
+            // Chưa nhập gì -> mặc định Hồ Hoàn Kiếm để không chặn luồng
+            onReady({
+                start_lat: 21.0285,
+                start_lon: 105.8542,
+                start_point: 'Hồ Hoàn Kiếm, Hà Nội'
+            });
             return;
         }
 
-        // 2. Người dùng dán tọa độ trực tiếp → dùng luôn
+        // 3. Người dùng dán tọa độ trực tiếp → dùng luôn
         const coords = parseCoordinates(startPointText);
         if (coords) {
-            tripState.startFingerprint = fingerprint;
+            tripState.startFingerprint = `coords:${coords.lat},${coords.lon}`;
             onReady({
                 start_lat: coords.lat,
                 start_lon: coords.lon,
@@ -195,7 +241,7 @@ $(document).ready(function () {
             return;
         }
 
-        // 3. Địa chỉ chữ → geocode Nominatim
+        // 4. Địa chỉ chữ → geocode Nominatim
         const query = (startPointText.includes('Việt Nam') || startPointText.includes('Vietnam'))
             ? startPointText
             : startPointText + ', Hà Nội, Việt Nam';
@@ -210,45 +256,31 @@ $(document).ready(function () {
                 countrycodes: 'vn',
             },
             headers: { 'Accept-Language': 'vi,en' },
-            timeout: 10000,
+            timeout: 5000,
         })
             .done(res => {
-                tripState.startFingerprint = fingerprint;
                 if (res && res.length > 0) {
                     onReady({
                         start_lat: parseFloat(res[0].lat),
                         start_lon: parseFloat(res[0].lon),
-                        start_point: ''
+                        start_point: startPointText
                     });
                 } else {
-                    alert(
-                        'Không tìm thấy địa điểm "' + startPointText + '" trên bản đồ.\n\n' +
-                        'Thử:\n• Viết rõ hơn (vd: Hồ Hoàn Kiếm, Hà Nội)\n' +
-                        '• Hoặc nhập tọa độ: 21.0285, 105.8520\n' +
-                        '• Hoặc bấm "Dùng GPS"'
-                    );
-                    onReady(null);
+                    console.warn('Nominatim không thấy "' + startPointText + '", dùng vị trí trung tâm Hà Nội');
+                    onReady({
+                        start_lat: 21.0285,
+                        start_lon: 105.8542,
+                        start_point: startPointText
+                    });
                 }
             })
             .fail(() => {
-                tripState.startFingerprint = fingerprint;
-                if (window.location.protocol === 'file:') {
-                    alert(
-                        'Không thể tìm địa chỉ vì đang mở file trực tiếp (file://).\n\n' +
-                        'Cách 1: Mở qua local server\n' +
-                        '  python -m http.server 5500\n' +
-                        '  rồi vào http://localhost:5500\n\n' +
-                        'Cách 2: Nhập tọa độ trực tiếp, ví dụ:\n' +
-                        '  21.0285, 105.8520\n\n' +
-                        'Cách 3: Bấm "Dùng GPS"'
-                    );
-                } else {
-                    alert(
-                        'Không kết nối được dịch vụ bản đồ.\n' +
-                        'Hãy nhập tọa độ (vd: 21.0285, 105.8520) hoặc dùng GPS.'
-                    );
-                }
-                onReady(null);
+                console.warn('Nominatim lỗi/timeout, fallback về trung tâm Hà Nội');
+                onReady({
+                    start_lat: 21.0285,
+                    start_lon: 105.8542,
+                    start_point: startPointText
+                });
             });
     }
 
@@ -266,12 +298,13 @@ $(document).ready(function () {
             num_routes: 5,
         });
         $.ajax({
-            url: 'http://127.0.0.1:8000/api/routes',
+            url: `${API_BASE}/api/routes`,
             method: 'POST',
             contentType: 'application/json',
             data: JSON.stringify(payload),
+            timeout: 30000,
             success: function (res) {
-                if (res.status !== 'success') {
+                if (res.status !== 'success' || !res.routes || res.routes.length === 0) {
                     alert(res.message || 'Không tạo được lộ trình phù hợp, hãy thử mô tả khác.');
                     return;
                 }
@@ -279,12 +312,15 @@ $(document).ready(function () {
                 tripState.currentRoutes = res;
                 const kept = res.routes.find(r => r.route_id === tripState.selectedRouteId);
                 tripState.selectedRouteId = (kept || res.routes[0] || {}).route_id || null;
-                renderRouteCards(res.routes);
 
-                if (!$('#chat-section').is(':visible')) {
-                    $('#hero-section, #map-section').hide();
-                    $('#chat-section').fadeIn();
+                try {
+                    renderRouteCards(res.routes);
+                } catch (e) {
+                    console.error("Lỗi khi render thẻ lộ trình:", e);
                 }
+
+                $('#hero-section, #map-section').hide();
+                $('#chat-section').fadeIn();
             },
             error: (xhr) => alert("Không tạo được lộ trình: " + (xhr.responseJSON?.detail || "Kiểm tra Backend.")),
             complete: () => { if (onComplete) onComplete(); }
@@ -313,64 +349,159 @@ $(document).ready(function () {
         });
     }
 
+    // Nút nhanh xử lý trực tiếp ở backend (không qua LLM): mỗi nút ứng với một `action`.
     const QUICK_ACTIONS = [
-        { label: '+ Thêm quán ăn trưa', text: 'Thêm một quán ăn trưa phù hợp' },
-        { label: '+ Thêm quán cà phê', text: 'Thêm một quán cà phê phù hợp' },
-        { label: '− Bớt một điểm', text: 'Bớt bớt một điểm tham quan, lịch trình đang hơi dày' },
-        { label: 'Đi chậm hơn', text: 'Tôi muốn đi chậm hơn, có nhiều thời gian nghỉ hơn' },
+        { label: '+ Thêm quán ăn trưa', action: 'add_lunch' },
+        { label: '+ Thêm quán cà phê', action: 'add_cafe' },
+        { label: '− Bớt một điểm', action: 'remove_one' },
+        { label: 'Đi chậm hơn', action: 'slow_down' },
     ];
 
     function renderQuickActions() {
         const $wrap = $('#ai-quick-actions').empty();
         QUICK_ACTIONS.forEach(qa => {
             const $chip = $(`<button type="button" class="quick-action-chip">${qa.label}</button>`);
-            $chip.on('click', function () { runQuickAction(qa.text, $chip); });
+            $chip.on('click', function () { runQuickAction(qa.action, $chip); });
             $wrap.append($chip);
         });
     }
 
-    function runQuickAction(instructionText, $chip) {
+    function runQuickAction(action, $chip) {
+        if (!tripState.selectedRouteId) return alert("Vui lòng chọn một lộ trình bên dưới trước khi chỉnh sửa!");
+
         $('#ai-quick-actions .quick-action-chip').prop('disabled', true);
-        const payload = {
-            region: 'Hanoi',
-            vehicle_type: $('#vehicle_type').val(),
-            start_time: $('#start_time').val(),
-            end_time: $('#end_time').val(),
-            user_preference: $('#user_preference').val(),
-            current_ids: tripState.aiSuggestedIds,
-            instruction: instructionText,
-            session_id: tripState.sessionId,
-        };
+        const loadingHtml = `
+            <div id="quick-action-loading" class="alert alert-light border-0 shadow-sm d-flex align-items-center gap-2 mb-3">
+                <i class="fa-solid fa-spinner fa-spin text-primary"></i>
+                <span>Đang điều chỉnh lộ trình...</span>
+            </div>`;
+        $('body').append(loadingHtml);
+
+        // Backend tự chọn/bớt điểm theo action và tính lại đúng lộ trình đang chọn
+        // (không phá vỡ các lộ trình còn lại).
         $.ajax({
-            url: 'http://127.0.0.1:8000/api/ai-refine',
+            url: `${API_BASE}/api/itinerary/quick-action`,
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify(payload),
+            data: JSON.stringify({ session_id: tripState.sessionId, action: action }),
             success: function (res) {
                 tripState.sessionId = res.session_id || tripState.sessionId;
-                tripState.aiSuggestedIds = res.suggested_ids || tripState.aiSuggestedIds;
-                $('#ai-advice-content').html((res.advice_text || '').replace(/\n/g, '<br>'));
-                fetchRoutes(() => $('#ai-quick-actions .quick-action-chip').prop('disabled', false));
+                if (res.status === 'success') {
+                    // Ghi đè vào đúng vị trí lộ trình cũ trong State
+                    const idx = tripState.currentRoutes.routes.findIndex(r => r.route_id === tripState.selectedRouteId);
+                    if (idx >= 0) tripState.currentRoutes.routes[idx] = res.itinerary;
+
+                    // Render lại danh sách, thẻ nào đang select sẽ giữ nguyên
+                    renderRouteCards(tripState.currentRoutes.routes);
+                } else if (res.message) {
+                    alert(res.message);
+                }
             },
             error: (xhr) => {
-                alert("Không cập nhật được gợi ý: " + (xhr.responseJSON?.detail || "Kiểm tra Backend."));
+                alert("Không cập nhật được lộ trình: " + (xhr.responseJSON?.detail || "Kiểm tra Backend."));
+            },
+            complete: function () {
+                $('#quick-action-loading').remove();
                 $('#ai-quick-actions .quick-action-chip').prop('disabled', false);
             }
         });
     }
 
     // ============================================================
-    // SCREEN 1 → SCREEN 2
+    // SCREEN 1 → SCREEN 2 (VỚI AI PARSER & CƠ CHẾ HỎI LẠI)
     // ============================================================
-    $('#btn-ask-ai, #btn-reject-route').click(function () {
+    function showClarification(qObj, autoProceed = false) {
+        if (!qObj) {
+            $('#ai-clarification-box').addClass('d-none');
+            return;
+        }
+        $('#ai-clarification-title').text('AI cần thêm một chút thông tin:');
+        $('#ai-clarification-question').text(qObj.question);
+        const $opts = $('#ai-clarification-options').empty();
+        const rawOpts = qObj.quick_options || qObj.options || [];
+        rawOpts.forEach(opt => {
+            const label = typeof opt === 'string' ? opt : (opt.label || opt.value);
+            const val = typeof opt === 'string' ? opt : (opt.value || opt.label);
+            const $btn = $(`<button type="button" class="clarification-chip">${label}</button>`);
+            $btn.on('click', function () {
+                if (qObj.field === 'start_point') {
+                    $('#start_point').val(val);
+                } else if (qObj.field === 'vehicle_type' || qObj.field === 'vehicle') {
+                    const low = String(val).toLowerCase();
+                    if (low.includes('máy')) $('#vehicle_type').val('xe_may');
+                    else if (low.includes('ô tô') || low.includes('o to')) $('#vehicle_type').val('o_to');
+                    else if (low.includes('bộ')) $('#vehicle_type').val('di_bo');
+                    else if (low.includes('16')) $('#vehicle_type').val('xe_16_cho');
+                    else if (low.includes('29')) $('#vehicle_type').val('xe_29_cho');
+                    else if (low.includes('đạp')) $('#vehicle_type').val('xe_dap');
+                } else if (qObj.field === 'time') {
+                    const low = String(val).toLowerCase();
+                    if (low.includes('cả ngày')) { $('#start_time').val('08:00'); $('#end_time').val('20:00'); }
+                    else if (low.includes('sáng')) { $('#start_time').val('08:00'); $('#end_time').val('12:00'); }
+                    else if (low.includes('chiều')) { $('#start_time').val('13:00'); $('#end_time').val('17:30'); }
+                    else if (low.includes('tối')) { $('#start_time').val('18:00'); $('#end_time').val('22:00'); }
+                } else if (qObj.field === 'preferences') {
+                    const cur = $('#user_preference').val().trim();
+                    $('#user_preference').val(cur ? cur + ', ' + val : val);
+                }
+                $('#ai-clarification-box').addClass('d-none');
+                $('#btn-ask-ai').click();
+            });
+            $opts.append($btn);
+        });
+        $('#ai-clarification-box').removeClass('d-none');
+    }
+
+    function proceedWithPlan(startParams, userPref, resetButtons) {
+        if (!startParams || (startParams.start_lat == null && startParams.start_lon == null)) {
+            startParams = { start_lat: 21.0285, start_lon: 105.8542, start_point: 'Hồ Hoàn Kiếm, Hà Nội' };
+        }
+
+        tripState.baseParams = {
+            region: 'Hanoi',
+            start_time: $('#start_time').val(),
+            end_time: $('#end_time').val(),
+            trip_date: $('#trip_date').val(),
+            vehicle_type: $('#vehicle_type').val(),
+            user_preference: userPref,
+            weight: 50,
+            start_lat: startParams.start_lat,
+            start_lon: startParams.start_lon,
+            start_point: startParams.start_point || '',
+        };
+
+        $.ajax({
+            url: `${API_BASE}/api/ai-suggest`,
+            method: 'POST',
+            contentType: 'application/json',
+            timeout: 15000,
+            data: JSON.stringify({
+                region: 'Hanoi',
+                user_preference: userPref,
+                vehicle_type: tripState.baseParams.vehicle_type,
+                start_time: tripState.baseParams.start_time,
+                end_time: tripState.baseParams.end_time,
+                trip_date: tripState.baseParams.trip_date || '',
+                start_point: tripState.baseParams.start_point || '',
+                session_id: tripState.sessionId,
+            }),
+            success: function (res) {
+                applyAdvice(res);
+                fetchRoutes(resetButtons);
+            },
+            error: function () {
+                console.warn("AI suggest timed out or failed, continuing directly to routes...");
+                fetchRoutes(resetButtons);
+            }
+        });
+    }
+
+    $('#btn-ask-ai, #btn-reject-route').click(function (e) {
+        if (e && e.preventDefault) e.preventDefault();
         const userPref = $('#user_preference').val().trim();
         if (!userPref) {
             alert("Hãy nhập mong muốn của bạn!");
             $('#user_preference').focus();
-            return;
-        }
-        if (!tripState.currentLocationData && !$('#start_point').val().trim()) {
-            alert('Vui lòng nhập điểm xuất phát!');
             return;
         }
 
@@ -380,64 +511,68 @@ $(document).ready(function () {
 
         $askBtn.add($rejectBtn).prop('disabled', true);
         if (isReject) $rejectBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tìm lộ trình mới...');
-        else $askBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang suy nghĩ...');
+        else $askBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang phân tích yêu cầu...');
 
         const resetButtons = () => {
             $askBtn.html('<i class="fa-solid fa-wand-magic-sparkles me-2"></i> Cùng lên kế hoạch nào').prop('disabled', false);
             $rejectBtn.html('<i class="fa-solid fa-rotate-right"></i> Nghĩ lộ trình khác').prop('disabled', false);
         };
 
-        resolveStartAndRun(function (startParams) {
-            // Geocode thất bại → dừng
-            if (!startParams || (startParams.start_lat == null && startParams.start_lon == null)) {
-                resetButtons();
-                return;
-            }
+        const formCtx = {
+            start_time: $('#start_time').val(),
+            end_time: $('#end_time').val(),
+            trip_date: $('#trip_date').val(),
+            vehicle_type: $('#vehicle_type').val(),
+            start_point: $('#start_point').val().trim(),
+            has_gps: !!tripState.currentLocationData,
+        };
 
-            // Bắt buộc phải có lat/lon (backend fail khi chỉ nhận text)
-            if (startParams.start_lat == null || startParams.start_lon == null) {
-                alert(
-                    'Không lấy được tọa độ điểm xuất phát.\n' +
-                    'Hãy nhập tọa độ (vd: 21.0285, 105.8520) hoặc dùng GPS.'
-                );
-                resetButtons();
-                return;
-            }
+        // BƯỚC 1: Gọi Semantic Parser để đọc hiểu câu lệnh và kiểm tra thiếu thông tin
+        $.ajax({
+            url: `${API_BASE}/api/parse-prompt`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ prompt: userPref, context: formCtx }),
+            success: function (parseRes) {
+                // Tự động điền thông tin nếu AI trích xuất được từ câu lệnh
+                if (parseRes && parseRes.fields) {
+                    const f = parseRes.fields;
+                    const src = parseRes.sources || {};
+                    if (src.start_time === 'prompt' && f.start_time) $('#start_time').val(f.start_time);
+                    if (src.end_time === 'prompt' && f.end_time) $('#end_time').val(f.end_time);
+                    if (src.trip_date === 'prompt' && f.trip_date) $('#trip_date').val(f.trip_date);
+                    if (src.vehicle_type === 'prompt' && f.vehicle_type) $('#vehicle_type').val(f.vehicle_type);
+                    if (src.start_point === 'prompt' && f.start_point) $('#start_point').val(f.start_point);
 
-            tripState.baseParams = {
-                region: 'Hanoi',
-                start_time: $('#start_time').val(),
-                end_time: $('#end_time').val(),
-                trip_date: $('#trip_date').val(),
-                vehicle_type: $('#vehicle_type').val(),
-                user_preference: userPref,
-                weight: 50,
-                start_lat: startParams.start_lat,
-                start_lon: startParams.start_lon,
-                start_point: startParams.start_point || '',
-            };
-
-            $.ajax({
-                url: 'http://127.0.0.1:8000/api/ai-suggest',
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({
-                    region: 'Hanoi',
-                    user_preference: userPref,
-                    vehicle_type: tripState.baseParams.vehicle_type,
-                    start_time: tripState.baseParams.start_time,
-                    end_time: tripState.baseParams.end_time,
-                    session_id: tripState.sessionId,
-                }),
-                success: function (res) {
-                    applyAdvice(res);
-                    fetchRoutes(resetButtons);
-                },
-                error: function (xhr) {
-                    alert("Chưa nghĩ ra được lộ trình: " + (xhr.responseJSON?.detail || "Không thể kết nối tới hệ thống, vui lòng thử lại."));
-                    resetButtons();
+                    if (parseRes.understood_summary) {
+                        $('#ai-understood-text').text(parseRes.understood_summary);
+                        $('#ai-understood-badge').removeClass('d-none');
+                    }
                 }
-            });
+
+                // Nếu thiếu thông tin quan trọng (điểm xuất phát, khung giờ mâu thuẫn...) -> Hỏi lại
+                if (parseRes && parseRes.status === 'need_clarification' && parseRes.clarification_questions?.length) {
+                    showClarification(parseRes.clarification_questions[0], true);
+                    resetButtons();
+                    return;
+                } else {
+                    $('#ai-clarification-box').addClass('d-none');
+                }
+
+                // BƯỚC 2: Định vị và tư vấn lộ trình
+                $askBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tư vấn lộ trình...');
+
+                resolveStartAndRun(function (startParams) {
+                    proceedWithPlan(startParams, userPref, resetButtons);
+                });
+            },
+            error: function () {
+                // Fallback nếu parse-prompt lỗi: tiếp tục luồng bình thường
+                $askBtn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tư vấn lộ trình...');
+                resolveStartAndRun(function (startParams) {
+                    proceedWithPlan(startParams, userPref, resetButtons);
+                });
+            }
         });
     });
 
@@ -458,7 +593,7 @@ $(document).ready(function () {
         $btn.html('<i class="fa-solid fa-spinner fa-spin"></i> Đang tính toán...').prop('disabled', true);
 
         $.ajax({
-            url: 'http://127.0.0.1:8000/api/routes/select',
+            url: `${API_BASE}/api/routes/select`,
             method: 'POST',
             contentType: 'application/json',
             data: JSON.stringify({
@@ -553,7 +688,7 @@ $(document).ready(function () {
 
             // Đồng bộ với backend (không chặn UI)
             $.ajax({
-                url: 'http://127.0.0.1:8000/api/routes/select',
+                url: `${API_BASE}/api/routes/select`,
                 method: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -585,11 +720,18 @@ $(document).ready(function () {
                 : '';
             const review = (loc.review || '').trim();
             const reviewHtml = review ? `<div class="timeline-review">★ “${review}”</div>` : '';
+            const style = categoryStyle(loc.loai_hinh);
+            let actionLabel = "Tham quan";
+            if (loc.loai_hinh === 'TTTM') actionLabel = "Xem phim & vui chơi";
+            else if (loc.loai_hinh === 'Cafe') actionLabel = "Cà phê & thư giãn";
+            else if (loc.loai_hinh === 'Ăn uống') actionLabel = "Ăn uống";
+            else if (loc.loai_hinh === 'Checkin') actionLabel = "Chụp ảnh check-in";
+
             $timeline.append(`
                 <li>
                     <span class="badge bg-dark mb-1">${loc.arrive_time} - ${loc.depart_time}</span>
                     <h6 class="fw-bold mb-1">${idx + 1}. ${loc.ten}</h6>
-                    <div class="text-muted small"><i class="fa-solid fa-camera"></i> Tham quan: ${loc.visit_time} phút</div>
+                    <div class="text-muted small"><i class="fa-solid ${style.icon}" style="color:${style.color};"></i> ${actionLabel}: ${loc.visit_time} phút</div>
                     ${reviewHtml}${travelInfo}
                 </li>
             `);
@@ -622,7 +764,7 @@ $(document).ready(function () {
 
             const popupHtml = `
                 <b style="font-size:14px;">${idx + 1}. ${loc.ten}</b>
-                <div class="small text-muted">${loc.loai_hinh || ''}</div>
+                <div class="small text-muted">${formatCategoryLabel(loc.loai_hinh)}</div>
                 ${ratingHtml}
                 ${reviewHtml}
             `;
@@ -726,7 +868,7 @@ $(document).ready(function () {
         };
 
         $.ajax({
-            url: 'http://127.0.0.1:8000/api/ai-refine',
+            url: `${API_BASE}/api/ai-refine`,
             method: 'POST',
             contentType: 'application/json',
             data: JSON.stringify(refinePayload),
@@ -736,7 +878,7 @@ $(document).ready(function () {
 
                 // Chỉ sau khi backend recalculate xong mới báo thành công
                 $.ajax({
-                    url: 'http://127.0.0.1:8000/api/itinerary/update',
+                    url: `${API_BASE}/api/itinerary/update`,
                     method: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ session_id: tripState.sessionId }),
@@ -805,7 +947,7 @@ $(document).ready(function () {
         formData.append("file", file);
         $('#upload-status').html('<span class="text-primary">Đang nạp dữ liệu...</span>');
         $.ajax({
-            url: 'http://127.0.0.1:8000/api/admin/import-excel',
+            url: `${API_BASE}/api/admin/import-excel`,
             method: 'POST',
             data: formData,
             processData: false,

@@ -96,11 +96,11 @@ SET IDENTITY_INSERT DIA_DIEM ON;
 
 INSERT INTO DIA_DIEM (id, ten, loai_hinh, mo_ta, vi_do, kinh_do, diem_gia_tri, thoi_gian_tham_quan_phut)
 VALUES
-(1, N'Lotte Center Liễu Giai', N'TTTM', N'Giảng Võ, Hà Nội, Việt Nam', 21.0315, 105.8160, 8.8, 120),
-(2, N'Vincom Center Bà Triệu', N'TTTM', N'191 P. Bà Triệu, Hai Bà Trưng, Hà Nội, Việt Nam', 21.0110, 105.8503, 8.2, 60),
-(3, N'Tràng Tiền Plaza', N'TTTM', N'24 P. Hai Bà Trưng, Cửa Nam, Hà Nội, Việt Nam', 21.0251, 105.8540, 8.5, 180),
-(4, N'Vincom Mega Mall Royal City', N'TTTM', N'72A Nguyễn Trãi, Thanh Xuân, Hà Nội, Việt Nam', 21.0022, 105.8156, 8.6, 120),
-(5, N'Aeon Mall Long Biên', N'TTTM', N'27 Đ. Cổ Linh, Long Biên, Hà Nội, Việt Nam', 21.0261, 105.9004, 9.0, 60),
+(1, N'Lotte Center Liễu Giai (Rạp Lotte Cinema)', N'TTTM', N'Giảng Võ, Hà Nội, Việt Nam', 21.0315, 105.8160, 8.8, 120),
+(2, N'Vincom Center Bà Triệu (Rạp CGV)', N'TTTM', N'191 P. Bà Triệu, Hai Bà Trưng, Hà Nội, Việt Nam', 21.0110, 105.8503, 8.2, 60),
+(3, N'Tràng Tiền Plaza (Rạp CGV)', N'TTTM', N'24 P. Hai Bà Trưng, Cửa Nam, Hà Nội, Việt Nam', 21.0251, 105.8540, 8.5, 180),
+(4, N'Vincom Mega Mall Royal City (Rạp CGV)', N'TTTM', N'72A Nguyễn Trãi, Thanh Xuân, Hà Nội, Việt Nam', 21.0022, 105.8156, 8.6, 120),
+(5, N'Aeon Mall Long Biên (Rạp CGV)', N'TTTM', N'27 Đ. Cổ Linh, Long Biên, Hà Nội, Việt Nam', 21.0261, 105.9004, 9.0, 60),
 (6, N'Phở Thìn Bờ Hồ (Hàng Vôi)', N'Ăn uống', N'19 P. Hàng Vôi, Hoàn Kiếm, Hà Nội, Việt Nam', 21.0304, 105.8572, 8.4, 180),
 (7, N'Bún chả Hương Liên (Bún chả Obama)', N'Ăn uống', N'24 P. Lê Văn Hưu, Cửa Nam, Hà Nội, Việt Nam', 21.0181, 105.8543, 8.9, 120),
 (8, N'Bánh tôm Hồ Tây (Thanh Niên)', N'Ăn uống', N'Thanh Niên, Tây Hồ, Hà Nội, Việt Nam', 21.0478, 105.8388, 7.8, 60),
@@ -125,7 +125,8 @@ VALUES
 (27, N'Lăng Chủ tịch Hồ Chí Minh', N'Tham quan', N'1 Hùng Vương, Điện Biên, Ba Đình, Hà Nội', 21.0369, 105.8352, 9.5, 180),
 (28, N'Văn Miếu - Quốc Tử Giám', N'Tham quan', N'58 Quốc Tử Giám, Văn Miếu, Đống Đa, Hà Nội', 21.0282, 105.8359, 9.4, 120),
 (29, N'Chùa Trấn Quốc (Hồ Tây)', N'Tham quan', N'Thanh Niên, Tây Hồ, Hà Nội, Việt Nam', 21.0480, 105.8373, 9.1, 60),
-(30, N'Nhà thờ Lớn Hà Nội', N'Checkin', N'1 P. Nhà Thờ, Hoàn Kiếm, Hà Nội, Việt Nam', 21.0287, 105.8493, 9.3, 180);
+(30, N'Nhà thờ Lớn Hà Nội', N'Checkin', N'1 P. Nhà Thờ, Hoàn Kiếm, Hà Nội, Việt Nam', 21.0287, 105.8493, 9.3, 180),
+(31, N'Trung tâm Chiếu phim Quốc Gia (Rạp chiếu phim)', N'TTTM', N'87 Láng Hạ, Ba Đình, Hà Nội, Việt Nam', 21.0167, 105.8155, 9.2, 150);
 
 SET IDENTITY_INSERT DIA_DIEM OFF;
 
@@ -160,7 +161,8 @@ VALUES
 (27, '09:00', '22:00', N'Tất cả các ngày'),
 (28, '08:00', '21:00', N'Tất cả các ngày'),
 (29, '07:00', '20:00', N'Tất cả các ngày'),
-(30, '09:00', '22:00', N'Tất cả các ngày');
+(30, '09:00', '22:00', N'Tất cả các ngày'),
+(31, '08:00', '23:30', N'Tất cả các ngày');
 
 --8/12/2026
 -- Update điểm giá giá trị

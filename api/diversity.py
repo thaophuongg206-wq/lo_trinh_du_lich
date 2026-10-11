@@ -45,6 +45,9 @@ def _route_quality(route: dict, available_minutes: float) -> float:
     if available_minutes > 0:
         utilization = min(1.0, (route.get("total_time_minutes") or 0) / available_minutes)
     pref = route.get("avg_preference_score", 0.5)
+    # Nếu lộ trình khớp sở thích rất cao (người dùng có gu cụ thể), ưu tiên hàng đầu độ khớp gu
+    if pref >= 0.7:
+        return pref * 6.0 + n_places * 0.5 + utilization * 1.0
     return n_places * 1.0 + pref * 2.0 + utilization * 2.0
 
 

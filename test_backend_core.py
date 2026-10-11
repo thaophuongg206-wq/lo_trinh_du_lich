@@ -18,6 +18,9 @@ import sys
 import math
 import types
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # ---- Stub pyodbc: máy CI/sandbox không có driver ODBC, backend sẽ tự dùng SQLite ----
 if "pyodbc" not in sys.modules:
     stub = types.ModuleType("pyodbc")

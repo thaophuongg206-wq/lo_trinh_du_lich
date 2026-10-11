@@ -32,6 +32,12 @@ body, html {
     .search-box { border-radius: 18px; }
 }
 
+.hero-fields input[type="time"] {
+    min-width: 0 !important;
+    width: 100% !important;
+    flex: 1 1 0 !important;
+}
+
 /* CHATBOT SECTION */
 #chat-section { display: none; min-height: 100vh; background: #F8F9FA; padding: 50px 20px; }
 .ai-message {
@@ -66,6 +72,13 @@ body, html {
 }
 .quick-action-chip:hover { background: #2D3748; color: white; border-color: #2D3748; }
 .quick-action-chip:disabled { opacity: 0.6; cursor: wait; }
+
+.clarification-chip {
+    background: #ffffff; border: 1px solid #f59e0b; border-radius: 999px;
+    padding: 6px 14px; font-size: 0.85rem; font-weight: 600; color: #b45309;
+    cursor: pointer; transition: 0.2s;
+}
+.clarification-chip:hover { background: #f59e0b; color: white; border-color: #f59e0b; }
 
 .route-list { display: flex; flex-direction: column; gap: 14px; }
 .route-card {

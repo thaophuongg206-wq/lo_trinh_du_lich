@@ -106,15 +106,18 @@ class TripSession:
         if route is None:
             return None
         self.selected_route_id = route_id
-        self.current_itinerary = route
+        import copy
+        self.current_itinerary = copy.deepcopy(route)
         self.pinned_ids = {p["id"] for p in route.get("places", []) if p.get("id") != "gps_current"}
         self.touch()
-        return route
+        return self.current_itinerary
 
     # ---------------- itinerary ----------------
 
     def set_current_itinerary(self, itinerary: dict, repin: bool = True) -> None:
         self.current_itinerary = itinerary
+        if self.selected_route_id and self.selected_route_id in self.routes:
+            self.routes[self.selected_route_id] = itinerary
         if repin:
             self.pinned_ids = {
                 p["id"] for p in itinerary.get("places", []) if p.get("id") != "gps_current"

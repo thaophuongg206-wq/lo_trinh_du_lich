@@ -429,7 +429,10 @@ async def parse_prompt_endpoint(payload: dict):
     """
     LLM-as-Parser (Semantic Engine Module 1).
     Free-text tourist prompt → structured JSON constraints for the route engine.
+    Hỗ trợ context (từ form Screen 1) để nhận diện các trường thiếu và sinh câu hỏi lại.
     """
     from services.parser import parse_prompt
     prompt = (payload or {}).get("prompt") or (payload or {}).get("text") or ""
-    return parse_prompt(prompt)
+    context = (payload or {}).get("context")
+    use_llm = (payload or {}).get("use_llm")
+    return parse_prompt(prompt, context=context, use_llm=use_llm)

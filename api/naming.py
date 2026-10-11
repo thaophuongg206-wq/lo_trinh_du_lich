@@ -66,7 +66,7 @@ CATEGORY_EXPERIENCE_NAMES = {
     "Cafe": "Cafe, phố cũ và những khoảng nghỉ",
     "Tham quan": "Dấu ấn văn hóa & Chiều sâu di sản",
     "Checkin": "Hà Nội qua những góc check-in",
-    "TTTM": "Nhịp sống hiện đại & Mua sắm giải trí",
+    "TTTM": "Nhịp sống hiện đại, xem phim & giải trí",
     "Ăn uống": "Một ngày khám phá ẩm thực phố thị",
 }
 
@@ -164,7 +164,13 @@ def generate_route_description(route_points: list, theme: str, total_minutes, tr
     for p in visitable:
         lh = p.get("loai_hinh") or "Khác"
         counts[lh] = counts.get(lh, 0) + 1
-    breakdown = ", ".join(f"{n} {lh.lower()}" for lh, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+    def _format_lh(lh_name: str) -> str:
+        low = lh_name.lower()
+        if low == "tttm":
+            return "rạp phim & TTTM"
+        return low
+
+    breakdown = ", ".join(f"{n} {_format_lh(lh)}" for lh, n in sorted(counts.items(), key=lambda kv: -kv[1]))
 
     narrative = THEME_EXPERIENCE_DESCRIPTIONS.get(
         theme,
