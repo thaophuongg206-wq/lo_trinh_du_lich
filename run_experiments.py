@@ -105,7 +105,8 @@ def load_pois(absa_mode: str = "lexical") -> List[dict]:
     for r in rows:
         open_t = dtime.fromisoformat(str(r["gio_mo_cua"])[:8])
         close_t = dtime.fromisoformat(str(r["gio_dong_cua"])[:8])
-        rating = float(r["diem_gia_tri"] or 7.0) / 2.0  # scale ~1-5
+        _v = float(r["diem_gia_tri"] or 3.5)   # diem_gia_tri thang 5 (DB cu thang 10 thi chia 2)
+        rating = _v / 2.0 if _v > 5 else _v
         review_text = " ".join(
             str(r[k] or "") for k in ("review", "thong_tin_chi_tiet", "phu_hop")
         )

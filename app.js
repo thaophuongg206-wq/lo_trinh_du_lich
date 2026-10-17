@@ -110,10 +110,90 @@ $(document).ready(function () {
         return '';
     }
 
+    // ============================================================
+    // DỮ LIỆU ĐỊA ĐIỂM TỪ DB v2: giá, giờ cả tuần, rating, thẻ, ảnh, đặc điểm rút từ review
+    // ============================================================
+    function escHtml(s) {
+        return String(s === undefined || s === null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function toNumOrNull(v) {
+        if (v === null || v === undefined || v === '') return null;
+        const n = Number(v);
+        return isNaN(n) ? null : n;
+    }
+    function placePriceBounds(place) {
+        return { lo: toNumOrNull(place && place.gia_tu), hi: toNumOrNull(place && place.gia_den) };
+    }
+    // Giá hiển thị: "30.000 – 100.000 đ", "Dưới 100.000 đ", "Miễn phí"
+    function formatPlacePrice(place) {
+        const pb = placePriceBounds(place);
+        if (pb.lo === null && pb.hi === null) return formatCurrencyVND(estimatePlaceCost(place));
+        if (pb.lo === 0 && pb.hi === 0) return 'Miễn phí';
+        const f = (n) => n.toLocaleString('vi-VN');
+        if (pb.lo !== null && pb.hi !== null) return pb.lo === pb.hi ? `${f(pb.hi)} đ` : `${f(pb.lo)} – ${f(pb.hi)} đ`;
+        return pb.hi !== null ? `Dưới ${f(pb.hi)} đ` : `Từ ${f(pb.lo)} đ`;
+    }
+    function priceSourceNote(place) {
+        const g = String((place && place.gia_ghi_chu) || '');
+        if (/uoc luong|ước lượng/i.test(g)) return 'Giá ước lượng theo loại địa điểm';
+        if (/google/i.test(g)) return 'Theo Google Maps';
+        return '';
+    }
+    // Giờ mở cửa cả tuần, gộp ngày liên tiếp có giờ giống nhau: "T2–T5: 10:00–22:00 · T6–CN: 10:00–23:00"
+    function weekHoursNote(place) {
+        const days = Array.isArray(place && place.gio_tuan) ? place.gio_tuan : null;
+        if (!days || days.length !== 7) return '';
+        const short = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+        const txt = (d) => d.nghi ? 'Nghỉ' : `${d.mo}–${d.dong}`;
+        const groups = [];
+        days.forEach((d, i) => {
+            const last = groups[groups.length - 1];
+            if (last && last.txt === txt(d)) last.end = i; else groups.push({ start: i, end: i, txt: txt(d) });
+        });
+        if (groups.length === 1) return groups[0].txt === 'Nghỉ' ? '' : 'Mở cửa tất cả các ngày trong tuần';
+        return groups.map(g => `${g.start === g.end ? short[g.start] : short[g.start] + '–' + short[g.end]}: ${g.txt}`).join(' · ');
+    }
+    function placeTagGroups(place) {
+        const the = Array.isArray(place && place.the) ? place.the : [];
+        const names = (nhom) => the.filter(t => t && t.nhom === nhom).map(t => t.ten);
+        const space = { trong_nha: 'Trong nhà', ngoai_troi: 'Ngoài trời', ca_hai: 'Trong nhà & ngoài trời' }[place && place.trong_nha_ngoai_troi] || '';
+        return { hoatDong: names('hoat_dong'), phongCach: names('phong_cach'), space };
+    }
+    function getPlaceRatingCount(place) {
+        const n = toNumOrNull(place && place.so_luot_danh_gia);
+        return n && n > 0 ? `${n.toLocaleString('vi-VN')} đánh giá` : '';
+    }
+    // Review nổi bật: ưu tiên trích dẫn đã chọn từ review thật (có số sao); không có thì cắt ngắn review cũ
+    function reviewSnippet(place) {
+        const ins = (place && place.review_insight) || {};
+        const q = Array.isArray(ins.trich_dan) && ins.trich_dan.length ? ins.trich_dan[0] : null;
+        if (q && q.noi_dung) return (q.sao ? `★${q.sao} · ` : '') + q.noi_dung;
+        const r = String(firstDefined(place && place.review, place && place.thong_tin_chi_tiet)).trim();
+        return r.length > 220 ? r.slice(0, 220).replace(/\s+\S*$/, '') + '…' : r;
+    }
+    // Chip "khách hay khen" / "lưu ý" / hoạt động, dùng ở Screen 2
+    function buildInsightChipsHtml(place) {
+        const ins = (place && place.review_insight) || {};
+        const tg = placeTagGroups(place);
+        const chip = (cls, t) => `<span class="pd-chip ${cls}">${escHtml(t)}</span>`;
+        const parts = [];
+        if (tg.space) parts.push(chip('pd-chip-space', tg.space));
+        tg.hoatDong.slice(0, 4).forEach(t => parts.push(chip('pd-chip-act', t)));
+        (ins.noi_bat || []).slice(0, 3).forEach(t => parts.push(chip('pd-chip-good', '👍 ' + t)));
+        (ins.luu_y || []).slice(0, 2).forEach(t => parts.push(chip('pd-chip-warn', '⚠ ' + t)));
+        return parts.length ? `<div class="pd-chip-row">${parts.join('')}</div>` : '';
+    }
+
     function estimatePlaceCost(place) {
         if (!place) return 0;
         if (typeof place.chi_phi === 'number') return place.chi_phi;
         if (typeof place.cost === 'number') return place.cost;
+        const pb = placePriceBounds(place);                       // giá từ DB v2 (gia_tu / gia_den)
+        if (pb.lo !== null || pb.hi !== null) {
+            if (pb.lo !== null && pb.hi !== null) return Math.round((pb.lo + pb.hi) / 2);
+            return pb.hi !== null ? pb.hi : pb.lo;
+        }
         const text = `${firstDefined(place.thong_tin_chi_tiet)} ${firstDefined(place.review)}`;
         const matchK = text.match(/(\d{2,3})\s*k\b/i);
         if (matchK) return parseInt(matchK[1], 10) * 1000;
@@ -154,15 +234,12 @@ $(document).ready(function () {
         const o = formatTimeField(firstDefined(place.open_time, place.gio_mo_cua));
         const c = formatTimeField(firstDefined(place.close_time, place.gio_dong_cua));
         if (o && c) return `${o} – ${c}`;
-        if (place.loai_hinh === 'Checkin') return 'Mở cửa cả ngày';
-        if (place.loai_hinh === 'Tham quan') return '07:30 – 19:30';
-        if (place.loai_hinh === 'TTTM') return '09:00 – 22:00';
-        return '07:30 – 21:30';
+        return 'Chưa có dữ liệu giờ mở cửa';
     }
 
     function getPlaceRating(place) {
         const val = firstDefined(place.rating, place.google_rating, place.diem_danh_gia, place.score);
-        if (val === '') return '4.5';
+        if (val === '') return '—';
         const num = parseFloat(val);
         if (isNaN(num)) return String(val);
         return num > 5 ? (num / 2).toFixed(1) : num.toFixed(1);
@@ -217,25 +294,48 @@ $(document).ready(function () {
         const catLabel = formatCategoryLabel(place.loai_hinh);
         const ratingStr = getPlaceRating(place);
         const openHoursStr = formatOpeningHours(place);
-        const priceStr = formatCurrencyVND(estimatePlaceCost(place));
+        const priceStr = formatPlacePrice(place);
         const slotStr = place.arrive_time
             ? `${place.arrive_time} – ${firstDefined(place.depart_time, '--:--')} (${firstDefined(place.visit_time, 60)}p)`
             : `Khoảng ${firstDefined(place.visit_time, place.time, 60)} phút`;
         const activityStr = firstDefined(place.phu_hop, CATEGORY_ACTIVITY_LABEL[place.loai_hinh], 'Tham quan, khám phá & trải nghiệm không gian');
-        const addressStr = firstDefined(place.mo_ta, 'Hà Nội, Việt Nam');
-        const reviewStr = firstDefined(place.review, place.thong_tin_chi_tiet, 'Địa điểm được nhiều du khách yêu thích tại Hà Nội.');
+        const addressStr = firstDefined(place.dia_chi, place.mo_ta, 'Hà Nội, Việt Nam');
+        const reviewStr = reviewSnippet(place) || 'Địa điểm được nhiều du khách yêu thích tại Hà Nội.';
+        const tg = placeTagGroups(place);
+        const ins = place.review_insight || {};
 
         $('#pd-image').attr('src', imgUrl).attr('alt', place.ten).off('error').on('error', function () {
             $(this).attr('src', DEFAULT_PLACE_IMG);
         });
         $('#pd-category').text(catLabel);
-        $('#pd-rating').text(`★ ${ratingStr}`);
+        const cntStr = getPlaceRatingCount(place);
+        $('#pd-rating').text(`★ ${ratingStr}${cntStr ? ' · ' + cntStr : ''}`);
         $('#pd-title').text(place.ten);
         $('#pd-address span').text(addressStr);
         $('#pd-hours').text(openHoursStr);
+        $('#pd-hours-note').text(weekHoursNote(place));
         $('#pd-price').text(priceStr);
+        $('#pd-price-note').text(priceSourceNote(place));
         $('#pd-slot').text(slotStr);
-        $('#pd-activity').text(activityStr);
+        $('#pd-activity').text(tg.hoatDong.length ? tg.hoatDong.join(' · ') : activityStr);
+        $('#pd-tags').html(buildInsightChipsHtml(place));
+        // Review: chip khách hay khen / lưu ý + độ tích cực + review tiêu biểu
+        const sentiment = (ins.so_review && ins.diem_cam_xuc !== null && ins.diem_cam_xuc !== undefined)
+            ? `Phân tích từ ${ins.so_review} review thật · cảm xúc tích cực ${Math.round(ins.diem_cam_xuc * 100)}%` : '';
+        $('#pd-insight').text(sentiment);
+        // Thư viện ảnh
+        const gallery = Array.from(new Set([imgUrl].concat(Array.isArray(place.anh) ? place.anh : []).filter(Boolean)));
+        const $gal = $('#pd-gallery').empty();
+        if (gallery.length > 1) {
+            gallery.slice(0, 6).forEach((u, i) => {
+                $('<img class="pd-thumb' + (i === 0 ? ' active' : '') + '" loading="lazy" referrerpolicy="no-referrer">').attr('src', u).attr('alt', place.ten)
+                    .on('error', function () { $(this).remove(); })
+                    .on('click', function () {
+                        $('#pd-image').attr('src', u);
+                        $gal.find('.pd-thumb').removeClass('active'); $(this).addClass('active');
+                    }).appendTo($gal);
+            });
+        }
         $('#pd-context-note').html(buildContextualExperience(place));
         $('#pd-review').text(`“${reviewStr}”`);
 
@@ -652,11 +752,13 @@ $(document).ready(function () {
             const timeRange = `${firstDefined(p.arrive_time, '--:--')} – ${firstDefined(p.depart_time, '--:--')}`;
             const visitMins = firstDefined(p.visit_time, 60);
             const ratingStr = getPlaceRating(p);
-            const costStr = formatCurrencyVND(estimatePlaceCost(p));
+            const costStr = formatPlacePrice(p);
             const openHoursStr = formatOpeningHours(p);
-            const activityStr = firstDefined(p.phu_hop, CATEGORY_ACTIVITY_LABEL[p.loai_hinh], 'Tham quan & trải nghiệm');
-            const addressStr = firstDefined(p.mo_ta, 'Hà Nội');
-            const reviewStr = String(firstDefined(p.review)).trim();
+            const _tg = placeTagGroups(p);
+            const activityStr = _tg.hoatDong.length ? _tg.hoatDong.join(' · ') : firstDefined(p.phu_hop, CATEGORY_ACTIVITY_LABEL[p.loai_hinh], 'Tham quan & trải nghiệm');
+            const addressStr = firstDefined(p.dia_chi, p.mo_ta, 'Hà Nội');
+            const reviewStr = reviewSnippet(p);
+            const _cnt = getPlaceRatingCount(p);
             const contextExpHtml = buildContextualExperience(p);
             const legColor = LEG_COLORS[idx % LEG_COLORS.length];
 
@@ -669,14 +771,14 @@ $(document).ready(function () {
 
             return `
                 <div class="s2-timeline-item" data-place-idx="${idx}" title="Nhấn để xem chi tiết địa điểm">
-                    <img src="${imgUrl}" alt="${p.ten}" class="s2-timeline-img" loading="lazy" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                    <img src="${imgUrl}" alt="${p.ten}" class="s2-timeline-img" loading="lazy" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
                     <div class="s2-timeline-content">
                         <div class="s2-timeline-top">
                             <span class="s2-time-badge">
                                 <i class="fa-regular fa-clock"></i> ${timeRange} (${visitMins} phút)
                             </span>
                             <span class="s2-rating-badge" title="Điểm đánh giá">
-                                ★ ${ratingStr}
+                                ★ ${ratingStr}${_cnt ? ' <small>(' + _cnt + ')</small>' : ''}
                             </span>
                         </div>
                         <h5 class="s2-place-title">${idx + 1}. ${p.ten} <small class="text-secondary fw-normal">(${formatCategoryLabel(p.loai_hinh)})</small></h5>
@@ -687,7 +789,8 @@ $(document).ready(function () {
                             <span class="s2-meta-item"><i class="fa-solid fa-tag text-primary me-1"></i><strong>Giá dự kiến:</strong> ${costStr}</span>
                             <span class="s2-meta-item"><i class="fa-solid fa-location-dot text-primary me-1"></i><strong>Địa chỉ:</strong> ${addressStr}</span>
                         </div>
-                        ${reviewStr ? `<div class="s2-review-quote">💬 Review: “${reviewStr}”</div>` : ''}
+                        ${buildInsightChipsHtml(p)}
+                        ${reviewStr ? `<div class="s2-review-quote">💬 Review: “${escHtml(reviewStr)}”</div>` : ''}
                         ${nextMoveHtml}
                     </div>
                 </div>
@@ -767,7 +870,7 @@ $(document).ready(function () {
                     const timeBadge = p.arrive_time ? `${p.arrive_time} · ` : '';
                     return `
                         <div class="route-photo-item" data-photo-idx="${pIdx}" title="Nhấn để xem chi tiết ${p.ten}">
-                            <img src="${imgUrl}" alt="${firstDefined(p.ten, 'Điểm đến')}" loading="lazy" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                            <img src="${imgUrl}" alt="${firstDefined(p.ten, 'Điểm đến')}" loading="lazy" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
                             <div class="route-photo-caption">${pIdx + 1}. ${timeBadge}${p.ten}</div>
                         </div>
                     `;
@@ -1247,7 +1350,7 @@ $(document).ready(function () {
                 : '';
 
             const imgUrl = firstDefined(loc.url_hinh_anh, DEFAULT_PLACE_IMG);
-            const costStr = formatCurrencyVND(estimatePlaceCost(loc));
+            const costStr = formatPlacePrice(loc);
             const catLabel = formatCategoryLabel(loc.loai_hinh);
             const openHoursStr = formatOpeningHours(loc);
             const style = categoryStyle(loc.loai_hinh);
@@ -1270,13 +1373,13 @@ $(document).ready(function () {
                         <!-- Phần thông tin chính (Click vào mở Place Detail + Focus Map) -->
                         <div class="timeline-card-main">
                             <span class="drag-handle" title="⋮⋮ Kéo thả để đổi thứ tự địa điểm">⋮⋮</span>
-                            <img src="${imgUrl}" alt="${loc.ten}" class="timeline-place-thumb" loading="lazy" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                            <img src="${imgUrl}" alt="${loc.ten}" class="timeline-place-thumb" loading="lazy" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
                             <div class="timeline-place-body">
                                 <div class="timeline-place-time">${firstDefined(loc.arrive_time, '--:--')} – ${firstDefined(loc.depart_time, '--:--')} (${firstDefined(loc.visit_time, 60)} phút)</div>
                                 <h6 class="timeline-place-title">${idx + 1}. ${loc.ten}</h6>
                                 <div class="timeline-place-meta">
                                     <span><i class="fa-solid ${style.icon}" style="color:${style.color};"></i> ${catLabel}</span>
-                                    <span>· ★ ${getPlaceRating(loc)}</span>
+                                    <span>· ★ ${getPlaceRating(loc)}${getPlaceRatingCount(loc) ? ' (' + getPlaceRatingCount(loc) + ')' : ''}</span>
                                     <span>· 🕒 ${openHoursStr}</span>
                                 </div>
                                 <div class="timeline-place-cost">
@@ -1660,7 +1763,7 @@ $(document).ready(function () {
                     const $row =$(`
                         <div class="crud-candidate-card">
                             <div class="d-flex align-items-center gap-3">
-                                <img src="${img}" alt="${c.ten}" class="crud-cand-img" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                                <img src="${img}" alt="${c.ten}" class="crud-cand-img" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
                                 <div>
                                     <div class="fw-bold text-main">${c.ten} <span class="badge bg-light text-dark border ms-1">★ ${rating}</span></div>
                                     <div class="small text-secondary">${formatCategoryLabel(c.loai_hinh)} · Cách ${distVal} km · 🕒 ${openBadge}</div>
@@ -1765,7 +1868,7 @@ $(document).ready(function () {
             const $row =$(`
                 <div class="crud-candidate-card">
                     <div class="d-flex align-items-center gap-3">
-                        <img src="${img}" alt="${p.ten}" class="crud-cand-img" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                        <img src="${img}" alt="${p.ten}" class="crud-cand-img" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
                         <div>
                             <div class="fw-bold text-main">${p.ten} <span class="badge bg-light text-dark border ms-1">★ ${rating}</span></div>
                             <div class="small text-secondary">${formatCategoryLabel(p.loai_hinh)} · Giá dự kiến: ${costStr}</div>

@@ -89,7 +89,15 @@ def enrich_points(points: Iterable[dict], use_ollama: bool = True) -> List[dict]
     for p in points:
         q=dict(p)
         text=" ".join(str(p.get(k) or "") for k in ("review","thong_tin_chi_tiet","phu_hop"))
-        result=analyze(text) if use_ollama else _lexical(text)
+        # Ưu tiên phân tích từ review thật trong DB (số sao + từ khóa, review mới nặng hơn): ổn định, không cần Ollama.
+        result=None
+        try:
+            from review_insights import to_absa
+            result=to_absa(p.get("review_insight"))
+        except Exception:
+            result=None
+        if result is None:
+            result=analyze(text) if use_ollama else _lexical(text)
         q["sabsa_score"]=result["sabsa_score"]
         q["absa_aspects"]=result["aspects"]
         q["absa_source"]=result["source"]

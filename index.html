@@ -573,13 +573,15 @@
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content clean-modal overflow-hidden">
                 <div class="place-detail-hero">
-                    <img id="pd-image" src="" alt="Hình ảnh địa điểm" class="place-detail-img">
+                    <img id="pd-image" src="" alt="Hình ảnh địa điểm" class="place-detail-img" referrerpolicy="no-referrer">
                     <button type="button" class="btn-close place-detail-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
                     <div class="place-detail-badges">
                         <span id="pd-category" class="pd-cat-pill">Điểm đến</span>
                         <span id="pd-rating" class="pd-rating-pill">★ 4.5</span>
                     </div>
                 </div>
+
+                <div id="pd-gallery" class="pd-gallery"></div>
 
                 <div class="modal-body p-4">
                     <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
@@ -601,12 +603,14 @@
                             <div class="pd-info-box">
                                 <span class="pd-info-label"><i class="fa-regular fa-clock text-primary me-1"></i>Giờ mở cửa</span>
                                 <strong id="pd-hours" class="pd-info-value">08:00 – 21:00</strong>
+                                <small id="pd-hours-note" class="pd-info-note"></small>
                             </div>
                         </div>
                         <div class="col-12 col-sm-4">
                             <div class="pd-info-box">
                                 <span class="pd-info-label"><i class="fa-solid fa-wallet text-primary me-1"></i>Chi phí tham khảo</span>
                                 <strong id="pd-price" class="pd-info-value">50.000 đ</strong>
+                                <small id="pd-price-note" class="pd-info-note"></small>
                             </div>
                         </div>
                         <div class="col-12 col-sm-4">
@@ -623,6 +627,7 @@
                             <i class="fa-solid fa-person-hiking text-primary me-1"></i> Hoạt động & Trải nghiệm gợi ý
                         </div>
                         <p id="pd-activity" class="mb-2 text-main fw-medium"></p>
+                        <div id="pd-tags" class="mb-2"></div>
                         <div id="pd-context-note" class="s2-context-exp mb-0"></div>
                     </div>
 
@@ -631,6 +636,7 @@
                         <div class="pd-section-label">
                             <i class="fa-regular fa-comment-dots text-primary me-1"></i> Đánh giá & Review thực tế
                         </div>
+                        <div id="pd-insight" class="small text-secondary mb-2"></div>
                         <blockquote id="pd-review" class="pd-review-box mb-0"></blockquote>
                     </div>
                 </div>

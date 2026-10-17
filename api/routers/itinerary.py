@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.db import fetch_all_points
+from api.db import fetch_all_points, V2_PUBLIC_KEYS
 from api.diversity import build_timeline
 from api.factors import VEHICLE_ACCESS_LEVEL, get_weather_factor
 from api.naming import ROUTE_THEMES
@@ -92,7 +92,7 @@ def _pick_place_to_add(session, category: str, lunch: bool):
     anchors = [p for p in current_points if p.get("id") != "gps_current"]
 
     candidates = []
-    for p in fetch_all_points(vehicle_type=vehicle):
+    for p in fetch_all_points(vehicle_type=vehicle, trip_date=session.params.get("trip_date")):
         if p["id"] in current_ids or p["id"] in session.excluded_ids:
             continue
         if _strip_diacritics(p.get("loai_hinh") or "") != category:
@@ -157,7 +157,7 @@ def recalculate_route_from_places(
     k_weather = get_weather_factor(ref_lat, ref_lon)
     global_matrix = get_global_osrm_matrix(ordered_places, vehicle_type=vehicle_type)
 
-    db_points_list = fetch_all_points(vehicle_type=vehicle_type)
+    db_points_list = fetch_all_points(vehicle_type=vehicle_type, trip_date=session.params.get("trip_date"))
     db_points = {p["id"]: p for p in db_points_list}
 
     simulated_clock = clock_start
@@ -221,8 +221,11 @@ def recalculate_route_from_places(
             "url_hinh_anh": p.get("url_hinh_anh") or db_p.get("url_hinh_anh", ""),
             "diem_gia_tri": p.get("diem_gia_tri") or db_p.get("diem_gia_tri"),
             "rating": p.get("rating") or db_p.get("rating") or db_p.get("diem_gia_tri"),
+            **{k: (p.get(k) if p.get(k) not in (None, "", []) else db_p.get(k)) for k in V2_PUBLIC_KEYS if k != "rating"},
             "open_time": p_open_time,
             "close_time": p_close_time,
+            "gio_mo_cua": p_open_time.strftime("%H:%M") if hasattr(p_open_time, "strftime") else str(p_open_time)[:5],
+            "gio_dong_cua": p_close_time.strftime("%H:%M") if hasattr(p_close_time, "strftime") else str(p_close_time)[:5],
             "visit_time": round(visit_time, 1),
             "wait_time": round(wait_time, 1),
             "arrive_time": arrive_time_str,
@@ -273,7 +276,7 @@ def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[
     vehicle_type = session.params.get("vehicle_type", "xe_may")
     max_access = VEHICLE_ACCESS_LEVEL.get(vehicle_type, 3)
 
-    all_db_points = fetch_all_points(vehicle_type=vehicle_type)
+    all_db_points = fetch_all_points(vehicle_type=vehicle_type, trip_date=session.params.get("trip_date"))
     current_places = (session.current_itinerary or {}).get("places", [])
     current_ids = set(session.current_place_ids())
 
@@ -331,7 +334,7 @@ def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[
             dist /= anchors_count
 
         score = _score_of(p)
-        rank_val = (10.0 if cat_match else 2.0) + score * 2.0 + (5.0 if is_open else -10.0) - dist * 0.8
+        rank_val = (10.0 if cat_match else 2.0) + score * 4.0 + (5.0 if is_open else -10.0) - dist * 0.8
 
         candidates.append({
             "id": str(p["id"]),
@@ -340,6 +343,7 @@ def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[
             "lat": p["lat"],
             "lon": p["lon"],
             "rating": p.get("rating") or p.get("diem_gia_tri"),
+            **{k: p.get(k) for k in V2_PUBLIC_KEYS if k != "rating"},
             "diem_gia_tri": p.get("diem_gia_tri"),
             "review": p.get("review", ""),
             "url_hinh_anh": p.get("url_hinh_anh", ""),
@@ -501,7 +505,7 @@ async def replace_place(req: ItineraryReplaceRequest):
         new_place_data = candidates[0]
         new_id = new_place_data["id"]
     else:
-        db_pts = fetch_all_points(vehicle_type=session.params.get("vehicle_type", "xe_may"))
+        db_pts = fetch_all_points(vehicle_type=session.params.get("vehicle_type", "xe_may"), trip_date=session.params.get("trip_date"))
         new_place_data = next((p for p in db_pts if str(p["id"]) == new_id), None)
         if not new_place_data:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy thông tin địa điểm mới (id={new_id}).")
@@ -610,7 +614,7 @@ async def add_place_to_itinerary(req: ItineraryAddPlaceRequest):
             "itinerary": session.current_itinerary,
         }
 
-    db_pts = fetch_all_points(vehicle_type=session.params.get("vehicle_type", "xe_may"))
+    db_pts = fetch_all_points(vehicle_type=session.params.get("vehicle_type", "xe_may"), trip_date=session.params.get("trip_date"))
     new_place_data = next((p for p in db_pts if str(p["id"]) == new_pid), None)
     if not new_place_data:
         raise HTTPException(status_code=404, detail=f"Không tìm thấy địa điểm id={new_pid}.")

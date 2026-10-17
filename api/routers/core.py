@@ -19,11 +19,19 @@ def get_locations():
         conn, db_type = get_db_connection()
         cursor = conn.cursor()
         # Đã lấy thêm url_hinh_anh và diem_gia_tri để Frontend hiển thị
-        cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, url_hinh_anh, review FROM DIA_DIEM")
+        try:      # DB v2: có rating Google thật (thang 5)
+            cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, url_hinh_anh, review, rating, so_luot_danh_gia FROM DIA_DIEM")
+        except Exception:      # DB chưa nâng cấp v2 -> như cũ
+            conn.close()
+            conn, db_type = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, url_hinh_anh, review FROM DIA_DIEM")
         rows = fetch_all_dict(cursor, db_type)
         locations = [{
             "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], 
-            "loai_hinh": r["loai_hinh"], "rating": r["diem_gia_tri"], 
+            "loai_hinh": r["loai_hinh"],
+            "rating": r.get("rating") if r.get("rating") is not None else r["diem_gia_tri"],
+            "so_luot_danh_gia": r.get("so_luot_danh_gia"),
             "url_hinh_anh": r["url_hinh_anh"], "review": r["review"]
         } for r in rows]
         conn.close()

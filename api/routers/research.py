@@ -40,7 +40,7 @@ async def optimize_route_hybrid(request: OptimizationRequest):
         if end_dt <= start_dt:
             end_dt += timedelta(days=1)
 
-        points = fetch_all_points(request.vehicle_type)
+        points = fetch_all_points(request.vehicle_type, trip_date=base_date)
         if request.excluded_ids:
             points = [p for p in points if p["id"] not in set(map(str, request.excluded_ids))]
 
@@ -300,13 +300,13 @@ async def replan_itinerary(req: ReplanRequest):
     if end_dt<=hhmm(places[0].get("arrive_time","00:00")): end_dt+=timedelta(days=1)
 
     # hydrate with DB data (opening hours, visit time, score)
-    db={p["id"]:p for p in fetch_all_points(vehicle)}
+    db={p["id"]:p for p in fetch_all_points(vehicle, trip_date=base_date)}
     def hydrate(p):
         q=dict(db.get(str(p["id"]),{})); q.update({k:v for k,v in p.items() if v not in (None,"")})
         q.setdefault("open_time",datetime.strptime("00:00","%H:%M").time())
         q.setdefault("close_time",datetime.strptime("23:59","%H:%M").time())
         q["time"]=float(q.get("visit_time") or q.get("time") or 0)
-        q["experience_score"]=float(q.get("sabsa_score") or 0) if q.get("sabsa_score") is not None else float(q.get("score") or 0)/10
+        q["experience_score"]=float(q.get("sabsa_score") or 0) if q.get("sabsa_score") is not None else float(q.get("score") or 0)/5
         return q
     route=[hydrate(p) for p in places]
     excluded=set(map(str,(prm.get("excluded_ids") or [])))

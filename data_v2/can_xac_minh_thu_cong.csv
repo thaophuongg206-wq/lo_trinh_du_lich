@@ -1,0 +1,32 @@
+﻿id,ten,dia_chi,gio_mo_that,gio_dong_that,"ngay_nghi(vd: 2,6)",gia_tu_VND,gia_den_VND,muc_gia(1-4),rating_that,so_luot_danh_gia_that,thoi_gian_tham_quan_that_phut,ghi_chu_nguon_xac_minh,de_xuat_thoi_gian_phut,can_dien
+1,Lotte Center Liễu Giai,"Giảng Võ, Hà Nội, Việt Nam",09:30,22:00,,100000,300000,,4.3,6444,,"Uoc luong theo loai dia diem (Claude), chua xac minh",120,"gia la UOC LUONG, xac minh sau neu can"
+2,Vincom Center Bà Triệu,"191 P. Bà Triệu, Hai Bà Trưng, Hà Nội, Việt Nam",,,,100000,300000,,4.4,14417,,"Uoc luong theo loai dia diem (Claude), chua xac minh",120,"gia la UOC LUONG, xac minh sau neu can"
+3,Tràng Tiền Plaza,"24 P. Hai Bà Trưng, Cửa Nam, Hà Nội, Việt Nam",,,,150000,400000,,4.4,2745,,"Uoc luong theo loai dia diem (Claude), chua xac minh",120,"gia la UOC LUONG, xac minh sau neu can"
+4,Vincom Mega Mall Royal City,"72A Nguyễn Trãi, Thanh Xuân, Hà Nội, Việt Nam",,,,100000,300000,,4.5,1875,,"Uoc luong theo loai dia diem (Claude), chua xac minh",120,"gia la UOC LUONG, xac minh sau neu can"
+5,Aeon Mall Long Biên,"27 Đ. Cổ Linh, Long Biên, Hà Nội, Việt Nam",,,,100000,300000,,4.6,19941,,"Uoc luong theo loai dia diem (Claude), chua xac minh",120,"gia la UOC LUONG, xac minh sau neu can"
+6,Phở Thìn Bờ Hồ (Hàng Vôi),"19 P. Hàng Vôi, Hoàn Kiếm, Hà Nội, Việt Nam",,,,40000,100000,,4.2,3620,,Google: 1-100.000 d (duoi 100K); can duoi uoc luong (Claude),45,xong
+7,Bún chả Hương Liên (Bún chả Obama),"24 P. Lê Văn Hưu, Cửa Nam, Hà Nội, Việt Nam",,,,,,,4.1,12397,,,45,xong
+8,Bánh tôm Hồ Tây (Thanh Niên),"Thanh Niên, Tây Hồ, Hà Nội, Việt Nam",,,,40000,100000,,2.3,1439,,"Uoc luong theo loai dia diem (Claude), chua xac minh",45,"gia la UOC LUONG, xac minh sau neu can"
+9,Vua chả cá,"269 P. Giảng Võ, Ô Chợ Dừa, Hà Nội, Việt Nam",10:30,21:30,,,,,4.5,21551,,,45,so lieu rating/danh gia/gio la cua Thanh (Google Maps 03/10/2026); review+anh trong DB tu crawl co the thuoc listing khac
+10,Bún đậu mắm tôm Ngõ Trạm,"1B Ng. Trạm, Phố cổ Hà Nội, Hoàn Kiếm, Hà Nội",,,,50000,100000,,3.4,77,,"Uoc luong theo loai dia diem (Claude), chua xac minh",45,"gia la UOC LUONG, xac minh sau neu can"
+11,Phở cuốn Hương Mai (Ngũ Xã),"25 P. Ngũ Xã, Ba Đình, Hà Nội, Việt Nam",,,,30000,100000,,4,239,,Google: 1-100.000 d (duoi 100K); can duoi uoc luong (Claude),45,xong
+12,Nộm Long Vi Dung (Hàng Bạc),"P. Hồ Hoàn Kiếm/23 P. Hàng Bạc, Hoàn Kiếm, Hà Nội",,,,30000,60000,,4,1699,,"Uoc luong theo loai dia diem (Claude), chua xac minh",45,"gia la UOC LUONG, xac minh sau neu can"
+13,Bánh mì Trâm,"30 P. Đình Ngang, Cửa Nam, Hà Nội, Việt Nam",,,,20000,40000,,4.3,507,,"Uoc luong theo loai dia diem (Claude), chua xac minh",45,"gia la UOC LUONG, xac minh sau neu can"
+14,Miến lươn Chân Cầm,"1 P. Chân Cầm, Hoàn Kiếm, Hà Nội, Việt Nam",,,,30000,100000,,3.9,606,,Google: 1-100.000 d (duoi 100K); can duoi uoc luong (Claude),45,xong
+15,Xôi Yến (Nguyễn Hữu Huân),"35b P. Nguyễn Hữu Huân, Hoàn Kiếm, Hà Nội",06:00,23:59,,30000,60000,,4,4597,,"Uoc luong theo loai dia diem (Claude), chua xac minh",45,"gia la UOC LUONG, xac minh sau neu can"
+16,Loading T Cafe (Chân Cầm - Vintage),"8 P. Chân Cầm, Hoàn Kiếm, Hà Nội, Việt Nam",,,,40000,80000,,4.7,1755,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"gia la UOC LUONG, xac minh sau neu can"
+17,All Day Coffee (Quang Trung),"37 P. Quang Trung, Cửa Nam, Hà Nội, Việt Nam",,,,50000,120000,,4.7,3267,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"gia la UOC LUONG, xac minh sau neu can"
+18,Cafe Giảng (Cà phê trứng nổi tiếng),"39 P. Nguyễn Hữu Huân, Hoàn Kiếm, Hà Nội",,,,30000,60000,,4.4,17111,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"gia la UOC LUONG, xac minh sau neu can"
+19,Blackbird Coffee (Chân Cầm),"5 P. Chân Cầm, Hoàn Kiếm, Hà Nội, Việt Nam",,,,40000,80000,,4.6,1197,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"gia la UOC LUONG, xac minh sau neu can"
+20,Cotero Coffee (Tây Hồ),"80 Từ Hoa, Tây Hồ, Hà Nội, Việt Nam",07:30,22:30,,60000,150000,,4.6,116,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,so lieu rating/danh gia/gio la cua Thanh (Google Maps 03/10/2026); review+anh trong DB tu crawl co the thuoc listing khac
+21,La Mensa (Tông Đản),"8 Tông Đản, Hoàn Kiếm, Hà Nội, Việt Nam",,,,40000,100000,,4,849,,Google: 1-100.000 d (duoi 100K); can duoi uoc luong (Claude),60,xong
+22,Ban Công Cafe (Đinh Liệt - Biệt thự cổ),"2 Đinh Liệt, Hoàn Kiếm, Hà Nội, Việt Nam",,,,,,,4.8,7291,,,60,xong
+23,Yên Cafe (Quán Thánh),"182-184, 182 P. Quán Thánh, Ba Đình, Hà Nội",,,,40000,80000,,4.8,3643,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"gia la UOC LUONG, xac minh sau neu can"
+24,Hasu Cafe (Hàng Chuối),"12 Hàng Chuối, Hai Bà Trưng, Hà Nội, Việt Nam",,,,40000,80000,,4.4,15,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"DA DONG CUA VINH VIEN (diem mau); gia la UOC LUONG, xac minh sau neu can"
+25,Atelier Coffee (Nguyễn Thượng Hiền),"45 Nguyễn Thượng Hiền, Hai Bà Trưng, Hà Nội",07:00,17:30,,50000,120000,,5,12,,"Uoc luong theo loai dia diem (Claude), chua xac minh",60,"DA DONG CUA VINH VIEN (diem mau); gia la UOC LUONG, xac minh sau neu can"
+26,Đền Ngọc Sơn (Hồ Hoàn Kiếm),"Đinh Tiên Hoàng, Hoàn Kiếm, Hà Nội, Việt Nam",,,,50000,50000,,4.4,13257,,Nhap tay (Google Maps),45,xong
+27,Lăng Chủ tịch Hồ Chí Minh,"1 Hùng Vương, Điện Biên, Ba Đình, Hà Nội",,,,0,0,,4.5,21360,,mien phi,60,xong
+28,Văn Miếu - Quốc Tử Giám,"58 Quốc Tử Giám, Văn Miếu, Đống Đa, Hà Nội",07:30,17:30,,35000,70000,,4.6,25697,,Nhap tay (Google Maps),90,xong
+29,Chùa Trấn Quốc (Hồ Tây),"Thanh Niên, Tây Hồ, Hà Nội, Việt Nam",07:30,17:00,,0,0,,4.4,47535,,mien phi,45,xong
+30,Nhà thờ Lớn Hà Nội,"1 P. Nhà Thờ, Hoàn Kiếm, Hà Nội, Việt Nam",08:00,17:00,,0,0,,4.5,24388,,mien phi,30,xong
+31,Trung tâm Chiếu phim Quốc Gia (Rạp chiếu phim),"87 Láng Hạ, Chợ Dừa, Ba Đình, Hà Nội",08:00,23:00,,70000,120000,,4.4,13397,,"Gia: uoc luong ve xem phim (Claude), chua xac minh; rating/gio: nhap tay Google Maps",150,xong

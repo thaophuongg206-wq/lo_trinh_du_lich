@@ -2212,3 +2212,16 @@ h1, h2, h3, h4, h5, h6 {
         height: 150px;
     }
 }
+
+/* ===== Task 3: dữ liệu địa điểm v2 (thẻ, ảnh, review nổi bật, ghi chú giờ/giá) ===== */
+.pd-gallery { display: flex; gap: 6px; padding: 8px 16px 0; overflow-x: auto; }
+.pd-gallery:empty { display: none; }
+.pd-thumb { width: 64px; height: 48px; object-fit: cover; border-radius: 6px; cursor: pointer; opacity: .65; border: 2px solid transparent; flex: 0 0 auto; }
+.pd-thumb.active, .pd-thumb:hover { opacity: 1; border-color: var(--primary, #0d6efd); }
+.pd-info-note { display: block; margin-top: 2px; font-size: .72rem; line-height: 1.25; color: #6c757d; }
+.pd-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.pd-chip { font-size: .74rem; padding: 2px 9px; border-radius: 999px; background: #eef2f7; color: #344054; }
+.pd-chip-space { background: #e8f1ff; color: #1d4ed8; }
+.pd-chip-act { background: #f1f5f9; }
+.pd-chip-good { background: #e7f6ec; color: #166534; }
+.pd-chip-warn { background: #fff4e0; color: #9a5b00; }

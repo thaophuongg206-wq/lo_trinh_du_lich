@@ -158,7 +158,7 @@ def select_context_points(all_points: list, user_preference: str) -> list:
         keywords = _extract_keywords(user_preference)
 
         def relevance(p):
-            base = (p.get("score") or 0) / 10.0
+            base = (p.get("score") or 0) / 5.0
             pref = calculate_preference_score(p, keywords)
             if keywords and pref > 0.0:
                 return base * 0.2 + pref * 0.8

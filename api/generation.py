@@ -7,9 +7,15 @@ from api.factors import VEHICLE_ACCESS_LEVEL, VEHICLE_ACCESS_NOTE
 from api.session_helpers import _ensure_unique_names
 from api.preferences import _extract_keywords, calculate_preference_score
 from datetime import datetime, timedelta
-from api.db import fetch_all_points
+from api.db import fetch_all_points, V2_PUBLIC_KEYS
 from api.diversity import format_route_object, select_diverse_routes
 from api import osrm_matrix, factors
+
+
+def _s10(p):
+    """score (thang 5) quy ve thang 10 chi de GIU NGUYEN trong so cac scorer da tinh chinh truoc day."""
+    return (p.get("score") or 0) * 2.0
+
 import random
 
 def run_route_generation(request: OptimizationRequest,
@@ -68,7 +74,7 @@ def run_route_generation(request: OptimizationRequest,
         raise HTTPException(status_code=400, detail="Lỗi định dạng thời gian (start_time/end_time phải theo dạng HH:MM)")
 
     # 3. LẤY DANH SÁCH ĐỊA ĐIỂM TỪ DATABASE
-    all_points = fetch_all_points()
+    all_points = fetch_all_points(trip_date=base_date)   # giờ mở cửa theo THỨ của ngày đi
 
     # 3b. LỌC ĐỊA ĐIỂM THEO KHẢ NĂNG TIẾP CẬN CỦA PHƯƠNG TIỆN
     max_access = VEHICLE_ACCESS_LEVEL.get(request.vehicle_type, 3)
@@ -295,7 +301,10 @@ def run_route_generation(request: OptimizationRequest,
                 "thong_tin_chi_tiet": point.get("thong_tin_chi_tiet", ""),
                 "review": point.get("review", ""),
                 "phu_hop": point.get("phu_hop", ""), "url_hinh_anh": point.get("url_hinh_anh", ""),
-               
+                **{k: point.get(k) for k in V2_PUBLIC_KEYS},   # rating, giá, thẻ, ảnh... (DB v2)
+                "gio_mo_cua": point["open_time"].strftime("%H:%M"),    # giờ mở/đóng cửa của đúng NGÀY ĐI
+                "gio_dong_cua": point["close_time"].strftime("%H:%M"),
+
                 "visit_time": round(visit_time, 1),
                 "wait_time": round(wait_time, 1),
                 "arrive_time": arrive_time_str,
@@ -643,14 +652,14 @@ def run_route_generation(request: OptimizationRequest,
             strategies.extend([
                 # Khám phá: bắt đầu từ nửa xa của bản đồ → tập điểm lệch hẳn.
                 ("exploration", pool_far[: max(8, len(pool_far) // 2)],
-                 lambda last, p, d: d / ((p.get("score") or 1) + 1), 1.0),
+                 lambda last, p, d: d / ((_s10(p) or 1) + 1), 1.0),
 
                 # Đa dạng: phạt nặng nếu trùng loại hình với điểm vừa ghé.
                 ("diverse", base_unvisited,
                  lambda last, p, d: d + (150 if p.get("loai_hinh") == last.get("loai_hinh") else 0), 1.0),
 
                 ("highlight", pool_value[: max(8, len(pool_value) // 2)],
-                 lambda last, p, d: -(p.get("score") or 0) + d * 0.1, 1.0),
+                 lambda last, p, d: -_s10(p) + d * 0.1, 1.0),
             ])
 
             for theme, pool, score_fn, ratio in strategies:
@@ -693,7 +702,7 @@ def run_route_generation(request: OptimizationRequest,
                 pool_excl = [p for p in base_unvisited if p["id"] != pool_value[skip]["id"]]
                 try_add(
                     build_route_greedy_custom(origin, pool_excl, k_weather, clock_end,
-                                              lambda last, p, d: d / ((p.get("score") or 1) + 1),
+                                              lambda last, p, d: d / ((_s10(p) or 1) + 1),
                                               must_visit_ids=must_visit_ids),
                     k_weather, f"{ROUTE_THEMES['exploration']['label']} #{skip + 1}", "exploration"
                 )
@@ -706,7 +715,7 @@ def run_route_generation(request: OptimizationRequest,
                 sample = rng.sample(base_unvisited, n)
                 try_add(
                     build_route_greedy_custom(origin, sample, k_weather, clock_end,
-                                              lambda last, p, d: d / ((p.get("score") or 1) + 1),
+                                              lambda last, p, d: d / ((_s10(p) or 1) + 1),
                                               must_visit_ids=must_visit_ids),
                     k_weather, f"{ROUTE_THEMES['exploration']['label']} #{seed}", "exploration"
                 )

@@ -30,16 +30,16 @@ Vec3 = Tuple[float, float, float]
 # ----------------------------------------------------------------------------- experience
 def experience_of(p: dict) -> float:
     """Experience of one POI in [0,1]. Prefers the pre-computed blend of SABSA and rating;
-    falls back to the raw 0-10 rating."""
+    falls back to the raw 0-5 rating (DIA_DIEM.diem_gia_tri = rating Google, thang 5)."""
     v = p.get("experience_score")
     if v is not None:
         return float(v)
-    return float(p.get("score") or 0.0) / 10.0
+    return float(p.get("score") or 0.0) / 5.0
 
 
-def blend_experience(sabsa: float, rating10: float, w_pref: float) -> float:
+def blend_experience(sabsa: float, rating5: float, w_pref: float) -> float:
     """Experience = w*SABSA + (1-w)*Rating, both on [0,1]. ONE formula for every endpoint."""
-    rating = max(0.0, min(1.0, float(rating10 or 0.0) / 10.0))
+    rating = max(0.0, min(1.0, float(rating5 or 0.0) / 5.0))
     return round(w_pref * float(sabsa) + (1.0 - w_pref) * rating, 4)
 
 

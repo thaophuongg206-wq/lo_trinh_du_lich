@@ -87,6 +87,61 @@ TAG_DB_KEYWORDS = {
     "entertainment": ["xem phim", "coi phim", "rap phim", "rap chieu phim", "cinema", "cgv", "lotte cinema", "bhd", "truot bang", "heroworld", "khu vui choi", "khu giai tri"],
 }
 
+# ------------------------------------------------------------
+# DỮ LIỆU CẤU TRÚC TỪ DB v2 (thẻ DIA_DIEM_THE, đặc điểm rút từ review, cột trong_nha_ngoai_troi, muc_gia)
+# Chính xác hơn dò từ khóa trong văn bản, nên được dùng TRƯỚC; thiếu dữ liệu thì rơi về từ khóa như cũ.
+# ------------------------------------------------------------
+TAG_DB_TAGS = {          # tag sở thích -> mã thẻ (bảng THE) của điểm
+    "cafe": {"cafe"},
+    "food": {"an_uong", "an_sang", "an_trua", "an_toi", "an_vat"},
+    "photo": {"chup_anh", "check_in", "view_dep"},
+    "quiet": {"yen_tinh"},
+    "culture": {"van_hoa", "lich_su", "tam_linh"},
+    "shopping": {"mua_sam", "mua_sam_giai_tri"},
+    "nature": {"ngoai_troi"},
+    "family": {"gia_dinh"},
+    "romantic": {"hen_ho"},
+    "lively": {"vui_choi", "ban_be_nhom"},
+    "entertainment": {"vui_choi"},
+}
+TAG_REVIEW_TRAITS = {    # tag sở thích -> mã đặc điểm rút từ review (review_insights.TRAITS)
+    "photo": {"check_in", "view_dep"},
+    "quiet": {"yen_tinh"},
+    "culture": {"lich_su"},
+    "family": {"gia_dinh"},
+}
+
+
+def _db_tag_codes(point: dict) -> set:
+    return {t.get("ma") for t in (point.get("the") or []) if isinstance(t, dict)}
+
+
+def _review_trait_codes(point: dict) -> set:
+    return set((point.get("review_insight") or {}).get("ma_dac_diem") or [])
+
+
+def _structured_tag_match(point: dict, tag: str) -> bool:
+    """Khớp tag bằng thẻ DB hoặc đặc điểm review. Điểm hay đông khách thì không tính là 'yên tĩnh'."""
+    if tag == "quiet" and "dong_khach" in _review_trait_codes(point):
+        return False
+    return bool(_db_tag_codes(point) & TAG_DB_TAGS.get(tag, set())
+                or _review_trait_codes(point) & TAG_REVIEW_TRAITS.get(tag, set()))
+
+
+def _indoor_outdoor(point: dict):
+    """'trong_nha' | 'ngoai_troi' | 'ca_hai' | None theo cột DB v2."""
+    v = point.get("trong_nha_ngoai_troi")
+    return v if v in ("trong_nha", "ngoai_troi", "ca_hai") else None
+
+
+def _price_level(point: dict):
+    """1 = bình dân (muc_gia <= 1), 3 = cao cấp (muc_gia >= 3), 2 = vừa; None nếu chưa có giá."""
+    m = point.get("muc_gia")
+    if m is None:
+        return None
+    return 1 if m <= 1 else (3 if m >= 3 else 2)
+
+
 _INDOOR_KW = ["trong nha", "dieu hoa", "may lanh", "ngam", "tttm", "tang"]
 _OUTDOOR_KW = ["ngoai troi", "ven ho", "quanh ho", "cong vien", "dao pho", "dao bo", "san vuon"]
 _BUDGET_LOW_KW = ["binh dan", "pho thong", "gia re", "via he", "sinh vien", "gia mem"]
@@ -112,6 +167,8 @@ def tag_matches(point: dict, tag: str, haystack: Optional[str] = None) -> bool:
     """Điểm có phù hợp tag sở thích không (theo loại hình hoặc từ khoá mô tả)."""
     category = _strip_diacritics(point.get("loai_hinh") or "").strip()
     if category in TAG_CATEGORY.get(tag, set()):
+        return True
+    if _structured_tag_match(point, tag):
         return True
     hs = haystack if haystack is not None else _point_haystack(point)
     return any(_has_phrase(hs, kw) for kw in TAG_DB_KEYWORDS.get(tag, []))
@@ -157,7 +214,13 @@ def calculate_preference_score(point: dict, preference_keywords: list,
 
     score = sum(components) / len(components) if components else 0.5
 
-    if indoor_pref == "trong_nha":
+    io = _indoor_outdoor(point)          # DB v2: cột trong_nha_ngoai_troi (chính xác hơn dò từ khóa)
+    if indoor_pref in ("trong_nha", "ngoai_troi") and io:
+        if io == indoor_pref:
+            score += 0.1
+        elif io != "ca_hai":
+            score -= 0.1
+    elif indoor_pref == "trong_nha":
         if any(_has_phrase(haystack, k) for k in _INDOOR_KW):
             score += 0.1
         elif any(_has_phrase(haystack, k) for k in _OUTDOOR_KW):
@@ -168,7 +231,13 @@ def calculate_preference_score(point: dict, preference_keywords: list,
         elif any(_has_phrase(haystack, k) for k in _INDOOR_KW):
             score -= 0.1
 
-    if budget == 1:
+    price = _price_level(point)          # DB v2: muc_gia (1-4)
+    if budget in (1, 3) and price is not None:
+        if price == budget:
+            score += 0.1
+        elif price != 2:
+            score -= 0.1
+    elif budget == 1:
         if any(_has_phrase(haystack, k) for k in _BUDGET_LOW_KW):
             score += 0.1
         elif any(_has_phrase(haystack, k) for k in _BUDGET_HIGH_KW):
@@ -188,6 +257,9 @@ def explain_match(point: dict, preference_keywords: list = None,
     haystack = _point_haystack(point)
     reasons = [f"hợp sở thích {TAG_LABELS_VI.get(t, t)}"
                for t in (preferred_tags or []) if t in TAG_DB_KEYWORDS and tag_matches(point, t, haystack)]
+    noi_bat = (point.get("review_insight") or {}).get("noi_bat") or []
+    if reasons and noi_bat:      # chỉ bổ sung "khách hay khen" khi điểm đã hợp sở thích
+        reasons.append("khách hay khen: " + ", ".join(noi_bat[:2]))
     kws = [kw for kw in (preference_keywords or []) if kw in haystack]
     if kws:
         reasons.append("khớp từ khoá: " + ", ".join(kws[:4]))
