@@ -109,6 +109,41 @@ def _pick_place_to_add(session, category: str, lunch: bool):
 
     return max(candidates, key=rank)
 
+"""ham tro giup chen vi tri toi uu"""
+def _find_best_insert_index(places: List[dict], new_place: dict) -> int:
+    """Tìm vị trí chèn tối ưu (đầu, giữa, hoặc cuối lộ trình) giúp tăng quãng đường ít nhất."""
+    if not places:
+        return 0
+    has_gps = places[0].get("id") == "gps_current"
+    if len(places) == 1:
+        return 1
+
+    best_idx = len(places)
+    min_extra = float("inf")
+
+    # 1. Xét chèn vào đầu lộ trình (nếu không có điểm GPS cố định ở đầu)
+    if not has_gps:
+        d_first = calc_dist(new_place, places[0])
+        if d_first < min_extra:
+            min_extra = d_first
+            best_idx = 0
+
+    # 2. Xét chèn vào giữa hai điểm (i-1) và i
+    for i in range(1, len(places)):
+        p_prev = places[i - 1]
+        p_next = places[i]
+        d_extra = calc_dist(p_prev, new_place) + calc_dist(new_place, p_next) - calc_dist(p_prev, p_next)
+        if d_extra < min_extra:
+            min_extra = d_extra
+            best_idx = i
+
+    # 3. Xét chèn vào cuối lộ trình (sau điểm cuối cùng)
+    d_last = calc_dist(places[-1], new_place)
+    if d_last < min_extra:
+        min_extra = d_last
+        best_idx = len(places)
+
+    return best_idx
 
 def recalculate_route_from_places(
     session,
@@ -208,6 +243,7 @@ def recalculate_route_from_places(
         if simulated_clock > p_close and pid != "gps_current":
             warnings.append(f"Thời gian tham quan '{ten}' kéo dài tới {depart_time_str}, sau giờ đóng cửa ({p_close_time.strftime('%H:%M')}).")
 
+        
         final_places.append({
             "id": pid,
             "ten": ten,
@@ -234,8 +270,14 @@ def recalculate_route_from_places(
             "distance_to_next": 0,
         })
 
+    available_minutes = max(0.0, (clock_end - clock_start).total_seconds() / 60.0)
+    if available_minutes < 30:
+        warnings.append(f"Quỹ thời gian chuyến đi quá ngắn ({round(available_minutes)} phút).")
+
+    overtime_minutes = 0.0
     if simulated_clock > clock_end:
-        warnings.append(f"Lộ trình kết thúc lúc {simulated_clock.strftime('%H:%M')}, muộn hơn giờ kết thúc dự kiến ({et}).")
+        overtime_minutes = round((simulated_clock - clock_end).total_seconds() / 60.0, 1)
+        warnings.append(f"Lộ trình kết thúc lúc {simulated_clock.strftime('%H:%M')}, muộn hơn giờ kết thúc dự kiến ({et}) {overtime_minutes} phút.")
 
     total_actual = (simulated_clock - clock_start).total_seconds() / 60
     travel_total = sum(p["travel_to_next"] for p in final_places)
@@ -266,6 +308,9 @@ def recalculate_route_from_places(
         "place_count": len(final_places),
         "optimized_route": final_places,
         "is_customized": True,
+        "is_feasible": len(warnings) == 0,
+        "overtime_minutes": overtime_minutes,
+        "warnings": warnings,
     }
     session.set_current_itinerary(new_itinerary)
     return new_itinerary, warnings
@@ -391,7 +436,9 @@ async def quick_action(req: QuickActionRequest):
             }
 
         # Tìm vị trí chèn tối ưu
-        best_idx = len(places)
+        best_idx = _find_best_insert_index(places, chosen)
+        places.insert(best_idx, chosen)
+        message = f"Mình đã thêm {chosen['ten']} vào lịch trình của bạn."
         min_extra = float("inf")
         start_idx = 1 if (places and places[0].get("id") == "gps_current") else 0
         for i in range(start_idx, len(places)):
@@ -627,18 +674,10 @@ async def add_place_to_itinerary(req: ItineraryAddPlaceRequest):
         ins_idx = next((i + 1 for i, p in enumerate(current_places) if str(p.get("id")) == after_id), len(current_places))
         current_places.insert(ins_idx, new_place_data)
     else:
-        best_idx = len(current_places)
-        min_extra_dist = float("inf")
-        start_idx = 1 if (current_places and current_places[0].get("id") == "gps_current") else 0
-        for i in range(start_idx, len(current_places)):
-            p_prev = current_places[i - 1] if i > 0 else current_places[0]
-            p_next = current_places[i]
-            d_extra = calc_dist(p_prev, new_place_data) + calc_dist(new_place_data, p_next) - calc_dist(p_prev, p_next)
-            if d_extra < min_extra_dist:
-                min_extra_dist = d_extra
-                best_idx = i
+        # Sử dụng hàm _find_best_insert_index đã định nghĩa để tìm vị trí tối ưu (đầu, giữa hoặc cuối)
+        best_idx = _find_best_insert_index(current_places, new_place_data)
         current_places.insert(best_idx, new_place_data)
-
+        
     session.restore([new_pid])
     advice = req.ai_advice or f"Đã thêm '{new_place_data.get('ten', new_pid)}' vào lộ trình."
     updated_route, warnings = recalculate_route_from_places(session, current_places, ai_advice=advice)
@@ -697,4 +736,118 @@ async def remove_place_from_itinerary(req: ItineraryRemovePlaceRequest):
         "warnings": warnings,
         "itinerary": updated_route,
         "routes": [updated_route],
+    }
+
+class ItineraryReoptimizeRequest(BaseModel):
+    session_id: str
+    ai_advice: Optional[str] = None
+
+
+@router.post("/api/itinerary/reoptimize")
+@router.post("/api/itinerary/places/reoptimize")
+async def reoptimize_itinerary(req: ItineraryReoptimizeRequest):
+    """
+    TỐI ƯU HOÁ LẠI LỘ TRÌNH HIỆN TẠI (Giai đoạn 4):
+    Giữ nguyên các địa điểm trong route đang chọn nhưng sắp xếp lại thứ tự
+    để ưu tiên kịp giờ mở cửa, giảm thời gian chờ và giảm quãng đường di chuyển.
+    """
+    session = store.get(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
+    if not session.current_itinerary:
+        raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn để tối ưu lại.")
+
+    current_places = list((session.current_itinerary or {}).get("places", []))
+    if len(current_places) <= 2:
+        updated_route, warnings = recalculate_route_from_places(
+            session, current_places, ai_advice=req.ai_advice or "Lộ trình đã ở trạng thái tối ưu."
+        )
+        return {
+            "status": "success",
+            "session_id": session.session_id,
+            "selected_route_id": session.selected_route_id,
+            "message": "Lộ trình ít điểm nên giữ nguyên thứ tự hiện tại.",
+            "warnings": warnings,
+            "itinerary": updated_route,
+            "routes": [updated_route],
+        }
+
+    has_gps = current_places[0].get("id") == "gps_current"
+    fixed_start = [current_places[0]] if has_gps else []
+    pool = current_places[1:] if has_gps else list(current_places)
+
+    # Giữ lại custom visit_time của từng điểm trước khi sắp xếp lại
+    saved_visit_times = {
+        str(p.get("id")): p.get("visit_time")
+        for p in current_places
+        if p.get("visit_time") is not None
+    }
+
+    # Thuật toán Greedy Time-Window + Nearest Neighbor để tìm thứ tự tối ưu
+    ordered = list(fixed_start)
+    remaining = list(pool)
+
+    # Nếu không có GPS, chọn điểm mở cửa sớm nhất hoặc điểm đầu tiên hiện tại làm mốc xuất phát
+    if not ordered and remaining:
+         remaining.sort(
+             key=lambda p: (
+                 str(p.get("gio_mo_cua") or "08:00"),
+                 -_score_of(p),
+             )
+         )
+         ordered.append(remaining.pop(0))
+
+    while remaining:
+        last_p = ordered[-1]
+        def _next_cost(cand):
+            dist = calc_dist(last_p, cand)
+            close_str = str(cand.get("gio_dong_cua") or "23:59")
+            try:
+                ch, cm = map(int, close_str[:5].split(":"))
+                close_h = ch + cm / 60.0
+            except Exception:
+                close_h = 23.9
+            # Ưu tiên điểm gần + đóng cửa sớm hơn để không bị lỡ giờ
+            return dist * 1.5 + close_h * 0.2
+
+        best_next = min(remaining, key=_next_cost)
+        ordered.append(best_next)
+        remaining.remove(best_next)
+
+    # So sánh kết quả trước và sau khi re-optimize: chỉ áp dụng nếu tốt hơn hoặc ít cảnh báo hơn
+    old_route, old_warnings = recalculate_route_from_places(
+        session, current_places, custom_visit_times=saved_visit_times
+    )
+    new_route, new_warnings = recalculate_route_from_places(
+        session, ordered, custom_visit_times=saved_visit_times
+    )
+
+    if len(new_warnings) > len(old_warnings) or (
+        len(new_warnings) == len(old_warnings) and new_route["total_duration"] > old_route["total_duration"] + 5
+    ):
+        # Giữ nguyên thứ tự cũ nếu thứ tự mới không cải thiện tổng thời gian / số cảnh báo
+        final_route, final_warnings = recalculate_route_from_places(
+            session,
+            current_places,
+            ai_advice=req.ai_advice or "Thứ tự hiện tại đã là phương án tối ưu nhất cho các địa điểm bạn chọn.",
+            custom_visit_times=saved_visit_times,
+        )
+        msg = req.ai_advice or "Thứ tự hiện tại đã tối ưu, không cần thay đổi."
+    else:
+        final_route, final_warnings = recalculate_route_from_places(
+            session,
+            ordered,
+            ai_advice=req.ai_advice or "Đã tối ưu hóa lại thứ tự di chuyển và khung giờ cho lộ trình của bạn.",
+            custom_visit_times=saved_visit_times,
+        )
+        msg = req.ai_advice or "Đã tối ưu hóa lại thứ tự các địa điểm để tiết kiệm thời gian di chuyển."
+
+    return {
+        "status": "success",
+        "session_id": session.session_id,
+        "selected_route_id": session.selected_route_id,
+        "message": msg,
+        "warnings": final_warnings,
+        "itinerary": final_route,
+        "routes": [final_route],
     }

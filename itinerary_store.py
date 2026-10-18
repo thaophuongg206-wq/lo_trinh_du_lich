@@ -115,12 +115,14 @@ class TripSession:
     # ---------------- itinerary ----------------
 
     def set_current_itinerary(self, itinerary: dict, repin: bool = True) -> None:
-        self.current_itinerary = itinerary
+        import copy
+        copied = copy.deepcopy(itinerary)
+        self.current_itinerary = copied
         if self.selected_route_id and self.selected_route_id in self.routes:
-            self.routes[self.selected_route_id] = itinerary
+            self.routes[self.selected_route_id] = copy.deepcopy(copied)
         if repin:
             self.pinned_ids = {
-                p["id"] for p in itinerary.get("places", []) if p.get("id") != "gps_current"
+                str(p["id"]) for p in copied.get("places", []) if p.get("id") != "gps_current"
             }
         self.touch()
 
