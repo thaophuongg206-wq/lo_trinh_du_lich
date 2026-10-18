@@ -1,41 +1,47 @@
-"""Production endpoints used by the web frontend."""
-from fastapi import File, HTTPException, UploadFile
-from api.session_helpers import ItineraryUpdateRequest, RouteSelectRequest, _params_from_request, _request_from_session
-from api.schemas import OptimizationRequest
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from typing import Optional
-from api.db import fetch_all_dict, fetch_all_points, get_db_connection
 import io
 import numpy as np
 import pandas as pd
+
+from api.session_helpers import ItineraryUpdateRequest, RouteSelectRequest, _params_from_request, _request_from_session
+from api.schemas import OptimizationRequest
+from api.db import fetch_all_dict, fetch_all_points, get_db_connection, V2_PUBLIC_KEYS
 from api.generation import run_route_generation
 from itinerary_store import store
 
-from fastapi import APIRouter
 router = APIRouter()
 
 @router.get("/api/locations")
-def get_locations():
+def get_locations(vehicle_type: str = "xe_may", trip_date: Optional[str] = None):
+    """Trả về danh sách toàn bộ địa điểm kèm đầy đủ metadata v2 (giá, giờ mở cửa, hoạt động, review, ảnh)."""
     try:
-        conn, db_type = get_db_connection()
-        cursor = conn.cursor()
-        # Đã lấy thêm url_hinh_anh và diem_gia_tri để Frontend hiển thị
-        try:      # DB v2: có rating Google thật (thang 5)
-            cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, url_hinh_anh, review, rating, so_luot_danh_gia FROM DIA_DIEM")
-        except Exception:      # DB chưa nâng cấp v2 -> như cũ
-            conn.close()
-            conn, db_type = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, ten, vi_do, kinh_do, loai_hinh, diem_gia_tri, url_hinh_anh, review FROM DIA_DIEM")
-        rows = fetch_all_dict(cursor, db_type)
-        locations = [{
-            "id": str(r["id"]), "ten": r["ten"], "lat": r["vi_do"], "lon": r["kinh_do"], 
-            "loai_hinh": r["loai_hinh"],
-            "rating": r.get("rating") if r.get("rating") is not None else r["diem_gia_tri"],
-            "so_luot_danh_gia": r.get("so_luot_danh_gia"),
-            "url_hinh_anh": r["url_hinh_anh"], "review": r["review"]
-        } for r in rows]
-        conn.close()
-        return {"status": "success", "data": locations, "db_engine": db_type}
+        points = fetch_all_points(vehicle_type=vehicle_type, trip_date=trip_date)
+        locations = []
+        for p in points:
+            open_t = p.get("open_time")
+            close_t = p.get("close_time")
+            loc_item = {
+                "id": str(p["id"]),
+                "ten": p.get("ten", ""),
+                "lat": p.get("lat") or p.get("vi_do", 0),
+                "lon": p.get("lon") or p.get("kinh_do", 0),
+                "loai_hinh": p.get("loai_hinh", ""),
+                "rating": p.get("rating") if p.get("rating") is not None else p.get("diem_gia_tri"),
+                "diem_gia_tri": p.get("diem_gia_tri"),
+                "so_luot_danh_gia": p.get("so_luot_danh_gia"),
+                "url_hinh_anh": p.get("url_hinh_anh", ""),
+                "review": p.get("review", ""),
+                "mo_ta": p.get("mo_ta", ""),
+                "thong_tin_chi_tiet": p.get("thong_tin_chi_tiet", ""),
+                "phu_hop": p.get("phu_hop", ""),
+                "gio_mo_cua": open_t.strftime("%H:%M") if hasattr(open_t, "strftime") else str(open_t or "00:00")[:5],
+                "gio_dong_cua": close_t.strftime("%H:%M") if hasattr(close_t, "strftime") else str(close_t or "23:59")[:5],
+                "visit_time": p.get("time") or p.get("thoi_gian_tham_quan_phut") or 45,
+                **{k: p.get(k) for k in V2_PUBLIC_KEYS if k != "rating"},
+            }
+            locations.append(loc_item)
+        return {"status": "success", "data": locations}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

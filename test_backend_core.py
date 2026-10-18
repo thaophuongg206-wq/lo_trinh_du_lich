@@ -289,6 +289,80 @@ leak3 = [x for r in legacy2["routes"] if banned in ids_of(r) for x in [banned]]
 check("H5 · ai_selected_ids không ghi đè được excluded_ids (mục 6)", not leak3,
       f"{banned} quay lại qua ai_selected_ids")
 
+# === TEST I: Bộ API chỉnh sửa lộ trình chi tiết (Giai đoạn 3 & 4 - Thảo Backend) ===
+print("\n=== TEST I: Itinerary Edit APIs (Add / Remove / Replace / Reorder / Change-Time / Reoptimize) & Route Isolation ===")
+res_create = client.post("/api/routes", json= BASE_PAYLOAD)
+
+sid_i = res_create.json()["session_id"]
+routes_before = {r["route_id"]: [p["id"] for p in r["places"]] for r in res_create.json()["routes"]}
+
+# Chọn route_2
+client.post("/api/routes/select", json={"session_id": sid_i, "route_id": "route_2"})
+
+# I1: Đổi thời gian tham quan 1 địa điểm (/api/itinerary/change-time)
+first_pid = routes_before["route_2"][0]
+r_time = client.post("/api/itinerary/change-time", json={
+    "session_id": sid_i,
+    "place_id": first_pid,
+    "custom_visit_time": 90
+})
+check("I1 · change-time trả HTTP 200", r_time.status_code == 200)
+updated_p0 = next(p for p in r_time.json()["itinerary"]["places"] if str(p["id"]) == str(first_pid))
+check("I2 · visit_time được cập nhật đúng 90 phút", updated_p0["visit_time"] == 90.0)
+
+# I3: Đổi thứ tự địa điểm (/api/itinerary/reorder)
+current_ids = [str(p["id"]) for p in r_time.json()["itinerary"]["places"] if p["id"] != "gps_current"]
+reversed_ids = list(reversed(current_ids))
+r_reorder = client.post("/api/itinerary/reorder", json={
+    "session_id": sid_i,
+    "ordered_place_ids": reversed_ids
+})
+check("I3 · reorder trả HTTP 200 và đổi đúng thứ tự", r_reorder.status_code == 200 and [str(p["id"]) for p in r_reorder.json()["itinerary"]["places"] if p["id"] != "gps_current"] == reversed_ids)
+
+# I4: Lấy ứng viên thay thế & Thay thế địa điểm (/api/itinerary/replacement-candidates & /replace)
+target_replace_id = reversed_ids[0]
+r_cand = client.get(f"/api/itinerary/replacement-candidates?session_id={sid_i}&place_id={target_replace_id}&limit=3")
+check("I4 · lấy danh sách ứng viên thay thế thành công", r_cand.status_code == 200 and "candidates" in r_cand.json())
+
+r_rep = client.post("/api/itinerary/replace", json={
+    "session_id": sid_i,
+    "old_place_id": target_replace_id
+})
+check("I5 · thay thế địa điểm thành công, điểm cũ không còn trong route", r_rep.status_code == 200 and target_replace_id not in [str(p["id"]) for p in r_rep.json()["itinerary"]["places"]])
+
+# I6: Xoá 1 địa điểm trực tiếp (/api/itinerary/remove)
+after_rep_ids = [str(p["id"]) for p in r_rep.json()["itinerary"]["places"] if p["id"] != "gps_current"]
+rem_id = after_rep_ids[-1]
+r_rem = client.post("/api/itinerary/remove", json={
+    "session_id": sid_i,
+    "place_id": rem_id
+})
+
+# Kiểm tra chuẩn: số lượng điểm sau khi remove phải giảm đúng 1 điểm so với trước khi remove
+places_after_remove = [str(p["id"]) for p in r_rem.json()["itinerary"]["places"] if p["id"] != "gps_current"]
+check("I6 · remove giảm đúng 1 địa điểm (không tự fill-up)", r_rem.status_code == 200 and len(places_after_remove) == len(after_rep_ids) - 1 and rem_id not in places_after_remove)
+
+# I7: Thêm lại địa điểm (/api/itinerary/add)
+r_add = client.post("/api/itinerary/add", json={
+    "session_id": sid_i,
+    "place_id": rem_id,
+    "custom_visit_time": 60
+})
+check("I7 · add thêm lại điểm thành công", r_add.status_code == 200 and rem_id in [str(p["id"]) for p in r_add.json()["itinerary"]["places"]])
+
+# I8: Re-optimize lộ trình (/api/itinerary/reoptimize)
+r_reopt = client.post("/api/itinerary/reoptimize", json={"session_id": sid_i})
+check("I8 · reoptimize hoạt động ổn định, giữ nguyên số điểm", r_reopt.status_code == 200 and len(r_reopt.json()["itinerary"]["places"]) == len(r_add.json()["itinerary"]["places"]))
+
+# I9: Kiểm tra CÔ LẬP ROUTE (Route Isolation): chỉnh sửa route_2 không làm thay đổi route_1, route_3...
+r_list_after = client.get(f"/api/routes?session_id={sid_i}").json()["routes"]
+routes_after = {r["route_id"]: [p["id"] for p in r["places"]] for r in r_list_after}
+other_routes_unchanged = all(
+    routes_after[rid] == routes_before[rid]
+    for rid in routes_before
+    if rid != "route_2"
+)
+check("I9 · CÔ LẬP ROUTE: các route khác (route_1, route_3...) hoàn toàn không bị ảnh hưởng khi sửa route_2", other_routes_unchanged)
 
 # ============================================================
 print("\n" + "=" * 60)
