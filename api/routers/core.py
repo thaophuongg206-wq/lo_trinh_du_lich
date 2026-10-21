@@ -1,5 +1,6 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
 import io
 import numpy as np
 import pandas as pd
@@ -234,6 +235,141 @@ async def get_session_state(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
     return {"status": "success", **session.snapshot()}
+
+
+class ChatMessageRecordRequest(BaseModel):
+    session_id: str
+    role: str
+    content: str
+    options: Optional[List[dict]] = None
+    target_place_id: Optional[str] = None
+    target_place_name: Optional[str] = None
+    meta: Optional[dict] = None
+
+
+@router.get("/api/chat-history")
+async def get_chat_history(session_id: str):
+    """Lấy toàn bộ lịch sử trò chuyện multi-turn của phiên."""
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
+    return {
+        "status": "success",
+        "session_id": session.session_id,
+        "chat_history": session.get_chat_history(),
+    }
+
+
+@router.post("/api/chat-history")
+async def record_chat_message(req: ChatMessageRecordRequest):
+    """Ghi nhận tin nhắn mới vào lịch sử chat của phiên."""
+    session = store.get(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
+    msg = session.add_chat_message(
+        role=req.role,
+        content=req.content,
+        options=req.options,
+        target_place_id=req.target_place_id,
+        target_place_name=req.target_place_name,
+        meta=req.meta,
+    )
+    return {"status": "success", "message": msg}
+
+
+@router.delete("/api/chat-history")
+async def delete_chat_history(session_id: str):
+    """Xóa toàn bộ lịch sử trò chuyện trong phiên."""
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
+    session.clear_chat_history()
+    return {"status": "success", "session_id": session.session_id, "message": "Đã xóa lịch sử trò chuyện."}
+
+
+class UserProfileUpdateRequest(BaseModel):
+    user_id: Optional[str] = "traveler_hn"
+    name: Optional[str] = None
+    email: Optional[str] = None
+    default_preference: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class UserFavoriteToggleRequest(BaseModel):
+    user_id: Optional[str] = "traveler_hn"
+    place_id: str
+
+
+class UserLoginRequest(BaseModel):
+    email: str
+    password: Optional[str] = None
+
+
+@router.get("/api/user/profile")
+async def get_user_profile(user_id: Optional[str] = "traveler_hn"):
+    """Lấy thông tin tài khoản và số lượng địa điểm yêu thích."""
+    from api.user_store import user_store
+    return {"status": "success", "data": user_store.get_user(user_id or "traveler_hn")}
+
+
+@router.post("/api/user/profile")
+async def update_user_profile(req: UserProfileUpdateRequest):
+    """Cập nhật thông tin tài khoản và gu du lịch mặc định."""
+    from api.user_store import user_store
+    updated = user_store.update_profile(req.user_id or "traveler_hn", req.model_dump(exclude_unset=True))
+    return {"status": "success", "data": updated}
+
+
+@router.get("/api/user/favorites")
+async def get_user_favorites(user_id: Optional[str] = "traveler_hn"):
+    """Lấy danh sách chi tiết các địa điểm đã lưu yêu thích của người dùng."""
+    from api.user_store import user_store
+    fav_ids = set(user_store.get_favorites(user_id or "traveler_hn"))
+    all_pts = fetch_all_points()
+    fav_places = []
+    for p in all_pts:
+        if str(p["id"]) in fav_ids:
+            open_t = p.get("open_time")
+            close_t = p.get("close_time")
+            fav_places.append({
+                "id": str(p["id"]),
+                "ten": p.get("ten", ""),
+                "lat": p.get("lat") or p.get("vi_do", 0),
+                "lon": p.get("lon") or p.get("kinh_do", 0),
+                "loai_hinh": p.get("loai_hinh", ""),
+                "rating": p.get("rating") if p.get("rating") is not None else p.get("diem_gia_tri"),
+                "so_luot_danh_gia": p.get("so_luot_danh_gia"),
+                "url_hinh_anh": p.get("url_hinh_anh", ""),
+                "dia_chi": p.get("dia_chi", ""),
+                "mo_ta": p.get("mo_ta", ""),
+                "gio_mo_cua": open_t.strftime("%H:%M") if hasattr(open_t, "strftime") else str(open_t or "00:00")[:5],
+                "gio_dong_cua": close_t.strftime("%H:%M") if hasattr(close_t, "strftime") else str(close_t or "23:59")[:5],
+            })
+    return {"status": "success", "user_id": user_id, "favorites_count": len(fav_places), "data": fav_places}
+
+
+@router.post("/api/user/favorites/toggle")
+async def toggle_user_favorite(req: UserFavoriteToggleRequest):
+    """Thêm hoặc gỡ một địa điểm khỏi danh sách yêu thích."""
+    from api.user_store import user_store
+    is_fav, fav_ids = user_store.toggle_favorite(req.user_id or "traveler_hn", req.place_id)
+    return {
+        "status": "success",
+        "user_id": req.user_id or "traveler_hn",
+        "place_id": str(req.place_id),
+        "is_favorite": is_fav,
+        "favorites": fav_ids,
+        "favorites_count": len(fav_ids),
+    }
+
+
+@router.post("/api/user/login")
+async def user_login(req: UserLoginRequest):
+    """Đăng nhập hoặc chuyển tài khoản người dùng đơn giản."""
+    from api.user_store import user_store
+    user_id = req.email.strip()
+    profile = user_store.get_user(user_id)
+    return {"status": "success", "message": "Đăng nhập thành công", "data": profile}
 
 
 @router.post("/api/admin/import-excel")

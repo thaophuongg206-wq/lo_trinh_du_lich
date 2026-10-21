@@ -27,7 +27,8 @@ $(document).ready(function () {
         '#10B981', // Chặng 6 -> 7: Emerald Green
     ];
 
-    // Đọc danh sách địa điểm yêu thích (Favorite) từ localStorage
+    // Quản lý người dùng & Bộ sưu tập yêu thích (Account & Favorite)
+    let currentUserId = 'traveler_hn';
     let favoritePlaceIds = new Set();
     try {
         const savedFavs = JSON.parse(localStorage.getItem('teravue_fav_places') ? localStorage.getItem('teravue_fav_places') : '[]');
@@ -36,11 +37,70 @@ $(document).ready(function () {
         favoritePlaceIds = new Set();
     }
 
+    function updateFavoriteBadges(count) {
+        const c = count !== undefined ? count : favoritePlaceIds.size;
+        $('#nav-favorites-badge').text(c);
+        const $qBadge = $('#quick-fav-badge');
+        if (c > 0) {
+            $qBadge.text(c).show();
+        } else {
+            $qBadge.hide();
+        }
+    }
+
     function saveFavorites() {
         try {
             localStorage.setItem('teravue_fav_places', JSON.stringify(Array.from(favoritePlaceIds)));
         } catch (e) {}
+        updateFavoriteBadges();
     }
+
+    function syncFavoritesWithServer() {
+        $.ajax({
+            url: `${API_BASE}/api/user/favorites?user_id=${encodeURIComponent(currentUserId)}`,
+            method: 'GET',
+            success: function (res) {
+                if (res.status === 'success' && Array.isArray(res.data)) {
+                    favoritePlaceIds = new Set(res.data.map(p => String(p.id)));
+                    saveFavorites();
+                    updateFavoriteBadges(res.favorites_count || favoritePlaceIds.size);
+                }
+            }
+        });
+    }
+
+    function toggleUserFavorite(placeId, callback) {
+        const pid = String(placeId);
+        $.ajax({
+            url: `${API_BASE}/api/user/favorites/toggle`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ user_id: currentUserId, place_id: pid }),
+            success: function (res) {
+                if (res.status === 'success') {
+                    if (res.is_favorite) {
+                        favoritePlaceIds.add(pid);
+                    } else {
+                        favoritePlaceIds.delete(pid);
+                    }
+                    saveFavorites();
+                    updateFavoriteBadges(res.favorites_count);
+                    if (typeof callback === 'function') callback(res.is_favorite);
+                }
+            },
+            error: function () {
+                // Fallback local
+                if (favoritePlaceIds.has(pid)) favoritePlaceIds.delete(pid);
+                else favoritePlaceIds.add(pid);
+                saveFavorites();
+                updateFavoriteBadges();
+                if (typeof callback === 'function') callback(favoritePlaceIds.has(pid));
+            }
+        });
+    }
+
+    // Đồng bộ danh sách yêu thích ngay khi load trang
+    syncFavoritesWithServer();
 
     // Đọc danh sách địa điểm ĐÃ ĐI (On-Trip Visited) từ localStorage
     let visitedPlaceIds = new Set();
@@ -348,14 +408,13 @@ $(document).ready(function () {
         updateModalFavBtn();
 
         $('#pd-fav-btn').off('click').on('click', function () {
-            if (favoritePlaceIds.has(pid)) {
-                favoritePlaceIds.delete(pid);
-            } else {
-                favoritePlaceIds.add(pid);
-            }
-            saveFavorites();
-            updateModalFavBtn();
-            refreshCurrentItinerary();
+            const $btn = $(this);
+            $btn.prop('disabled', true);
+            toggleUserFavorite(pid, function (isFav) {
+                $btn.prop('disabled', false);
+                updateModalFavBtn();
+                refreshCurrentItinerary();
+            });
         });
 
         const modalEl = document.getElementById('placeDetailModal');
@@ -1478,16 +1537,18 @@ $(document).ready(function () {
             // 4. Nút ❤️ Yêu thích
             $li.find('.btn-crud-fav').on('click', function (e) {
                 e.stopPropagation();
-                if (favoritePlaceIds.has(pid)) {
-                    favoritePlaceIds.delete(pid);
-                    $(this).removeClass('active').html('❤️ Yêu thích');
-                    showCrudBanner(`Đã bỏ "${loc.ten}" khỏi danh sách yêu thích.`);
-                } else {
-                    favoritePlaceIds.add(pid);
-                    $(this).addClass('active').html('❤️ Đã thích');
-                    showCrudBanner(`Đã lưu "${loc.ten}" vào danh sách yêu thích ❤️`);
-                }
-                saveFavorites();
+                const $btn = $(this);
+                $btn.prop('disabled', true);
+                toggleUserFavorite(pid, function (isFav) {
+                    $btn.prop('disabled', false);
+                    if (isFav) {
+                        $btn.addClass('active').html('❤️ Đã thích');
+                        showCrudBanner(`Đã lưu "${loc.ten}" vào danh sách yêu thích ❤️`);
+                    } else {
+                        $btn.removeClass('active').html('❤️ Yêu thích');
+                        showCrudBanner(`Đã bỏ "${loc.ten}" khỏi danh sách yêu thích.`);
+                    }
+                });
             });
 
             // 5. Nút ✕ Xóa
@@ -1992,6 +2053,9 @@ $(document).ready(function () {
         $('#ai-map-chat').toggleClass('open');
         if ($('#ai-map-chat').hasClass('open')) {
             $('#ai_map_instruction').focus();
+            if (tripState.sessionId) {
+                loadChatHistory(tripState.sessionId);
+            }
         }
     });
 
@@ -2008,10 +2072,180 @@ $(document).ready(function () {
             .filter(id => id && id !== 'gps_current');
     }
 
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     function appendChatBubble(text, who) {
         $('#ai-map-chat-log').append(`<div class="chat-bubble ${who}">${text}</div>`);
         const log = document.getElementById('ai-map-chat-log');
         if (log) log.scrollTop = log.scrollHeight;
+    }
+
+    function renderAiRefineOptions(refineRes) {
+        if (refineRes.advice_text) {
+            appendChatBubble(escapeHtml(refineRes.advice_text), 'assistant');
+        }
+
+        const options = refineRes.options || [];
+        if (!options.length) return;
+
+        let html = `<div class="ai-refine-options-container">`;
+        html += `<div class="ai-options-header"><i class="fa-solid fa-list-check me-1 text-primary"></i> Lựa chọn đề xuất cho bạn:</div>`;
+
+        options.forEach((opt, idx) => {
+            const starStr = opt.rating ? `<span class="opt-rating text-warning"><i class="fa-solid fa-star"></i> ${Number(opt.rating).toFixed(1)}</span>` : '';
+            const distStr = opt.distance_km != null ? `<span class="opt-dist text-primary ms-2"><i class="fa-solid fa-location-arrow"></i> Cách ${opt.distance_km} km</span>` : '';
+            const tagStr = (opt.tags || []).map(t => `<span class="opt-tag-pill">${escapeHtml(t)}</span>`).join(' ');
+
+            html += `
+                <div class="ai-option-item" data-place-id="${escapeHtml(opt.place_id)}">
+                    <div class="ai-option-item-header">
+                        <span class="ai-option-num">${idx + 1}</span>
+                        <div class="ai-option-title-block flex-grow-1">
+                            <span class="ai-option-name">${escapeHtml(opt.ten)}</span>
+                            <span class="ai-option-cat">${escapeHtml(opt.loai_hinh || '')}</span>
+                        </div>
+                        <div class="ai-option-badges ms-auto">
+                            ${starStr}
+                            ${distStr}
+                        </div>
+                    </div>
+                    ${tagStr ? `<div class="ai-option-tags-row mt-1">${tagStr}</div>` : ''}
+                    <div class="ai-option-reason mt-1">${escapeHtml(opt.reason || '')}</div>
+                    <div class="ai-option-action-row mt-2 text-end">
+                        <button type="button" class="btn btn-sm btn-outline-primary btn-apply-ai-opt"
+                                data-place-id="${escapeHtml(opt.place_id)}"
+                                data-place-name="${escapeHtml(opt.ten)}"
+                                data-target-id="${escapeHtml(refineRes.target_place_id || '')}"
+                                data-target-name="${escapeHtml(refineRes.target_place_name || '')}"
+                                data-action="${escapeHtml(opt.action || 'replace')}">
+                            <i class="fa-solid fa-check me-1"></i> Chọn địa điểm này
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        html += `</div>`;
+        $('#ai-map-chat-log').append(html);
+
+        const log = document.getElementById('ai-map-chat-log');
+        if (log) log.scrollTop = log.scrollHeight;
+    }
+
+    $(document).on('click', '.btn-apply-ai-opt', function () {
+        const $btn = $(this);
+        const $container = $btn.closest('.ai-refine-options-container');
+        const placeId = String($btn.data('place-id'));
+        const placeName = String($btn.data('place-name'));
+        const targetId = String($btn.data('target-id') || '');
+        const targetName = String($btn.data('target-name') || '');
+        const action = String($btn.data('action') || 'replace');
+
+        if ($btn.prop('disabled')) return;
+        $container.find('.btn-apply-ai-opt').prop('disabled', true).addClass('opacity-50');
+        $btn.html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang áp dụng...').removeClass('opacity-50');
+
+        appendChatBubble(`Đã chọn: <b>${escapeHtml(placeName)}</b>`, 'user');
+
+        if (action === 'replace' && targetId) {
+            $.ajax({
+                url: `${API_BASE}/api/itinerary/replace`,
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    session_id: tripState.sessionId,
+                    old_place_id: targetId,
+                    new_place_id: placeId,
+                    ai_advice: `Đã thay '${targetName || 'địa điểm cũ'}' bằng '${placeName}'.`
+                }),
+                success: function (res) {
+                    if (res.status === 'success' && res.itinerary) {
+                        setCurrentItinerary(res.itinerary);
+                        refreshCurrentItinerary();
+                        $btn.html('<i class="fa-solid fa-circle-check me-1"></i> Đã chọn');
+                        appendChatBubble(`Tuyệt vời! Đã thay <b>${escapeHtml(targetName || 'địa điểm cũ')}</b> bằng <b>${escapeHtml(placeName)}</b>. Bản đồ và timeline đã được cập nhật!`, 'assistant');
+                    } else {
+                        $btn.html('<i class="fa-solid fa-rotate me-1"></i> Thử lại');
+                        $container.find('.btn-apply-ai-opt').prop('disabled', false).removeClass('opacity-50');
+                        appendChatBubble('Không thể thay thế địa điểm: ' + firstDefined(res.message, 'Lỗi không xác định.'), 'assistant');
+                    }
+                },
+                error: function (xhr) {
+                    $btn.html('<i class="fa-solid fa-rotate me-1"></i> Thử lại');
+                    $container.find('.btn-apply-ai-opt').prop('disabled', false).removeClass('opacity-50');
+                    appendChatBubble('Lỗi kết nối khi thay thế: ' + firstDefined(xhr.responseJSON && xhr.responseJSON.detail, 'vui lòng thử lại.'), 'assistant');
+                }
+            });
+        } else {
+            // Action is add
+            $.ajax({
+                url: `${API_BASE}/api/itinerary/add`,
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    session_id: tripState.sessionId,
+                    place_id: placeId,
+                    ai_advice: `Đã thêm '${placeName}' vào lịch trình.`
+                }),
+                success: function (res) {
+                    if (res.status === 'success' && res.itinerary) {
+                        setCurrentItinerary(res.itinerary);
+                        refreshCurrentItinerary();
+                        $btn.html('<i class="fa-solid fa-circle-check me-1"></i> Đã chọn');
+                        appendChatBubble(`Tuyệt vời! Đã thêm <b>${escapeHtml(placeName)}</b> vào lịch trình của bạn.`, 'assistant');
+                    } else {
+                        $btn.html('<i class="fa-solid fa-rotate me-1"></i> Thử lại');
+                        $container.find('.btn-apply-ai-opt').prop('disabled', false).removeClass('opacity-50');
+                        appendChatBubble('Không thể thêm địa điểm: ' + firstDefined(res.message, 'Lỗi không xác định.'), 'assistant');
+                    }
+                },
+                error: function (xhr) {
+                    $btn.html('<i class="fa-solid fa-rotate me-1"></i> Thử lại');
+                    $container.find('.btn-apply-ai-opt').prop('disabled', false).removeClass('opacity-50');
+                    appendChatBubble('Lỗi kết nối khi thêm địa điểm: ' + firstDefined(xhr.responseJSON && xhr.responseJSON.detail, 'vui lòng thử lại.'), 'assistant');
+                }
+            });
+        }
+    });
+
+    function loadChatHistory(sessionId) {
+        if (!sessionId) return;
+        $.ajax({
+            url: `${API_BASE}/api/chat-history?session_id=${encodeURIComponent(sessionId)}`,
+            method: 'GET',
+            success: function (res) {
+                if (res.status === 'success' && Array.isArray(res.chat_history) && res.chat_history.length > 0) {
+                    const $log = $('#ai-map-chat-log');
+                    const existingCount = $log.children().length;
+                    if (existingCount <= 1) {
+                        $log.empty();
+                        res.chat_history.forEach(msg => {
+                            if (msg.role === 'user') {
+                                appendChatBubble(escapeHtml(msg.content), 'user');
+                            } else if (msg.role === 'assistant') {
+                                if (msg.options && msg.options.length) {
+                                    renderAiRefineOptions({
+                                        advice_text: msg.content,
+                                        options: msg.options,
+                                        target_place_id: msg.target_place_id,
+                                        target_place_name: msg.target_place_name,
+                                    });
+                                } else {
+                                    appendChatBubble(escapeHtml(msg.content), 'assistant');
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        });
     }
 
     function sendAiMapInstruction() {
@@ -2025,10 +2259,10 @@ $(document).ready(function () {
         }
 
         isAiUpdating = true;
-        appendChatBubble(instruction, 'user');
+        appendChatBubble(escapeHtml(instruction), 'user');
         $('#ai_map_instruction').val('').prop('disabled', true);
         $('#btn-send-ai-chat').prop('disabled', true);
-        appendChatBubble('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang cập nhật lộ trình...', 'assistant loading');
+        appendChatBubble('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang tìm kiếm phương án phù hợp...', 'assistant loading');
 
         const refinePayload = {
             region: 'Hanoi',
@@ -2050,6 +2284,16 @@ $(document).ready(function () {
                 $('#ai-map-chat-log .loading').remove();
                 tripState.sessionId = firstDefined(refineRes.session_id, tripState.sessionId);
 
+                // 1. Nếu AI trả về danh sách OPTIONS để user lựa chọn (thay vì tự quyết định một điểm duy nhất)
+                if (refineRes.options && refineRes.options.length > 0 && refineRes.intent === 'options') {
+                    renderAiRefineOptions(refineRes);
+                    isAiUpdating = false;
+                    $('#ai_map_instruction').prop('disabled', false);
+                    $('#btn-send-ai-chat').prop('disabled', false);
+                    return;
+                }
+
+                // 2. Nếu là lựa chọn từ turn trước (multi-turn) hoặc direct update
                 $.ajax({
                     url: `${API_BASE}/api/itinerary/update`,
                     method: 'POST',
@@ -2103,6 +2347,337 @@ $(document).ready(function () {
     $('#ai_map_instruction').keypress(function (e) {
         if (e.which === 13) sendAiMapInstruction();
     });
+
+    // ============================================================
+    // 1. XÓA LỊCH SỬ CHAT TRONG PHIÊN (#btn-clear-ai-chat)
+    // ============================================================
+    $('#btn-clear-ai-chat').on('click', function () {
+        if (!tripState.sessionId) {
+            $('#ai-map-chat-log').html(
+                '<div class="chat-bubble assistant">Chào bạn! Bạn có thể nhắn mình thêm quán ăn, đổi điểm tham quan hoặc điều chỉnh nhịp độ bất cứ lúc nào nhé.</div>'
+            );
+            return;
+        }
+
+        if (!confirm('Bạn có chắc muốn làm mới lịch sử hội thoại AI trong phiên này?')) return;
+
+        $.ajax({
+            url: `${API_BASE}/api/chat-history?session_id=${encodeURIComponent(tripState.sessionId)}`,
+            method: 'DELETE',
+            success: function () {
+                $('#ai-map-chat-log').html(
+                    '<div class="chat-bubble assistant">Đã làm mới lịch sử trò chuyện. Mình sẵn sàng hỗ trợ bạn tinh chỉnh lộ trình tiếp theo!</div>'
+                );
+            },
+            error: function () {
+                $('#ai-map-chat-log').html(
+                    '<div class="chat-bubble assistant">Đã làm mới lịch sử trò chuyện.</div>'
+                );
+            }
+        });
+    });
+
+    // ============================================================
+    // 2. MODAL YÊU THÍCH (#favoritesModal)
+    // ============================================================
+    function renderFavoritesModal() {
+        const $container = $('#favorites-list-container');
+        $container.html(`
+            <div class="text-center py-5 text-secondary">
+                <i class="fa-solid fa-spinner fa-spin fa-2x mb-2 text-primary"></i>
+                <div>Đang tải danh sách yêu thích...</div>
+            </div>
+        `);
+
+        $.ajax({
+            url: `${API_BASE}/api/user/favorites?user_id=${encodeURIComponent(currentUserId)}`,
+            method: 'GET',
+            success: function (res) {
+                if (!res || !Array.isArray(res.data) || res.data.length === 0) {
+                    $container.html(`
+                        <div class="text-center py-5 text-secondary">
+                            <i class="fa-regular fa-heart fa-3x mb-3 text-muted"></i>
+                            <h6 class="fw-bold text-main">Chưa có địa điểm yêu thích nào</h6>
+                            <p class="small text-secondary mb-0">
+                                Hãy bấm vào biểu tượng trái tim <span class="text-danger">❤️</span> trên chi tiết địa điểm hoặc thanh Timeline để lưu lại vào đây nhé!
+                            </p>
+                        </div>
+                    `);
+                    return;
+                }
+
+                $container.empty();
+                res.data.forEach(p => {
+                    const pid = String(p.id);
+                    const img = p.url_hinh_anh || DEFAULT_PLACE_IMG;
+                    const cat = p.loai_hinh || 'Điểm đến';
+                    const rating = (p.rating !== null && p.rating !== undefined) ? Number(p.rating).toFixed(1) : '4.5';
+                    const addr = p.dia_chi || 'Hà Nội';
+                    const openH = p.gio_mo_cua && p.gio_dong_cua ? `${p.gio_mo_cua} – ${p.gio_dong_cua}` : '08:00 – 21:00';
+
+                    const $card = $(`
+                        <div class="fav-item-card" data-id="${escapeHtml(pid)}">
+                            <img src="${escapeHtml(img)}" alt="${escapeHtml(p.ten)}" class="fav-item-img" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                            <div class="fav-item-info">
+                                <div class="fav-item-title">${escapeHtml(p.ten)}</div>
+                                <div class="fav-item-meta">
+                                    <span class="badge bg-light text-dark border">${escapeHtml(cat)}</span>
+                                    <span><i class="fa-solid fa-star text-warning me-1"></i>${rating}</span>
+                                    <span><i class="fa-regular fa-clock text-secondary me-1"></i>${openH}</span>
+                                </div>
+                                <div class="small text-secondary text-truncate mt-1" style="max-width: 380px;">
+                                    <i class="fa-solid fa-location-dot text-danger me-1"></i>${escapeHtml(addr)}
+                                </div>
+                            </div>
+                            <div class="fav-item-actions">
+                                <button type="button" class="btn btn-sm btn-outline-primary btn-add-fav-to-tour" data-id="${escapeHtml(pid)}" data-name="${escapeHtml(p.ten)}" title="Thêm điểm này vào lịch trình đang xem">
+                                    <i class="fa-solid fa-plus me-1"></i> Thêm vào tour
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger btn-remove-fav-item" data-id="${escapeHtml(pid)}" title="Bỏ khỏi yêu thích">
+                                    <i class="fa-regular fa-trash-can me-1"></i> Bỏ thích
+                                </button>
+                            </div>
+                        </div>
+                    `);
+
+                    // Thêm vào tour
+                    $card.find('.btn-add-fav-to-tour').on('click', function () {
+                        const $btn = $(this);
+                        if (!tripState.sessionId) {
+                            alert('Vui lòng tạo hoặc chọn một lịch trình ở màn hình chính trước khi thêm điểm.');
+                            return;
+                        }
+                        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang thêm...');
+                        $.ajax({
+                            url: `${API_BASE}/api/itinerary/add`,
+                            method: 'POST',
+                            contentType: 'application/json',
+                            data: JSON.stringify({
+                                session_id: tripState.sessionId,
+                                place_id: pid,
+                                ai_advice: `Đã thêm điểm yêu thích '${p.ten}' vào lịch trình.`
+                            }),
+                            success: function (addRes) {
+                                if (addRes.status === 'success' && addRes.itinerary) {
+                                    setCurrentItinerary(addRes.itinerary);
+                                    refreshCurrentItinerary();
+                                    $btn.removeClass('btn-outline-primary').addClass('btn-success').html('<i class="fa-solid fa-check me-1"></i> Đã thêm');
+                                    showCrudBanner(`Đã thêm "${p.ten}" từ mục Yêu thích vào lịch trình!`);
+                                } else {
+                                    $btn.prop('disabled', false).html('<i class="fa-solid fa-plus me-1"></i> Thêm vào tour');
+                                    alert('Không thể thêm địa điểm: ' + firstDefined(addRes.message, 'Lỗi không xác định.'));
+                                }
+                            },
+                            error: function () {
+                                $btn.prop('disabled', false).html('<i class="fa-solid fa-plus me-1"></i> Thêm vào tour');
+                                alert('Lỗi kết nối khi thêm địa điểm vào lịch trình.');
+                            }
+                        });
+                    });
+
+                    // Xóa khỏi favorites
+                    $card.find('.btn-remove-fav-item').on('click', function () {
+                        toggleUserFavorite(pid, function () {
+                            $card.fadeOut(250, function () {
+                                $(this).remove();
+                                if ($container.children().length === 0) {
+                                    renderFavoritesModal();
+                                }
+                            });
+                            refreshCurrentItinerary();
+                        });
+                    });
+
+                    $container.append($card);
+                });
+            },
+            error: function () {
+                $container.html(`
+                    <div class="text-center py-5 text-danger">
+                        <i class="fa-solid fa-triangle-exclamation fa-2x mb-2"></i>
+                        <div>Không thể tải danh sách yêu thích lúc này. Vui lòng thử lại.</div>
+                    </div>
+                `);
+            }
+        });
+    }
+
+    $('#favoritesModal').on('show.bs.modal', function () {
+        renderFavoritesModal();
+    });
+
+    // ============================================================
+    // 3. PROFILE & LOGIN (ACCOUNT MANAGEMENT)
+    // ============================================================
+    function loadUserProfile() {
+        $.ajax({
+            url: `${API_BASE}/api/user/profile?user_id=${encodeURIComponent(currentUserId)}`,
+            method: 'GET',
+            success: function (res) {
+                if (res.status === 'success' && res.data) {
+                    const u = res.data;
+                    $('#nav-user-name').text(u.name || 'Du khách Hà Nội');
+                    $('#nav-user-handle').text('@' + (u.id || 'traveler_hn'));
+                    if (u.avatar_url) {
+                        $('#nav-user-avatar').attr('src', u.avatar_url);
+                        $('#profile-avatar-img').attr('src', u.avatar_url);
+                    }
+                    $('#profile-display-name').text(u.name || 'Du khách Hà Nội');
+                    $('#profile-display-email').text(u.email || 'traveler@teravue.vn');
+                    $('#profile_name_input').val(u.name || 'Du khách Hà Nội');
+                    $('#profile_pref').val(u.default_preference || '');
+                    updateFavoriteBadges(u.favorites_count || favoritePlaceIds.size);
+                }
+            }
+        });
+    }
+
+    $('#accountModal').on('show.bs.modal', function () {
+        loadUserProfile();
+        $('#profile-save-feedback').empty();
+    });
+
+    $('#btn-save-profile').on('click', function () {
+        const $btn = $(this);
+        const newName = $('#profile_name_input').val().trim();
+        const newPref = $('#profile_pref').val().trim();
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang lưu...');
+
+        $.ajax({
+            url: `${API_BASE}/api/user/profile`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                user_id: currentUserId,
+                name: newName,
+                default_preference: newPref
+            }),
+            success: function (res) {
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Lưu thông tin');
+                $('#profile-save-feedback').html('<span class="text-success"><i class="fa-solid fa-check me-1"></i>Đã cập nhật hồ sơ thành công!</span>');
+                loadUserProfile();
+                setTimeout(() => {
+                    const m = bootstrap.Modal.getInstance(document.getElementById('accountModal'));
+                    if (m) m.hide();
+                }, 900);
+            },
+            error: function () {
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Lưu thông tin');
+                $('#profile-save-feedback').html('<span class="text-danger">Không thể lưu thông tin lúc này.</span>');
+            }
+        });
+    });
+
+    $('#login-form').on('submit', function (e) {
+        e.preventDefault();
+        const email = $('#login_email').val().trim();
+        const $btn = $('#btn-submit-login');
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang đăng nhập...');
+
+        $.ajax({
+            url: `${API_BASE}/api/user/login`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ email: email }),
+            success: function (res) {
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-right-to-bracket me-1"></i> Đăng nhập');
+                if (res.status === 'success' && res.data) {
+                    currentUserId = res.data.id;
+                    $('#login-feedback').html('<span class="text-success"><i class="fa-solid fa-check me-1"></i>Đăng nhập thành công!</span>');
+                    loadUserProfile();
+                    syncFavoritesWithServer();
+                    setTimeout(() => {
+                        const m = bootstrap.Modal.getInstance(document.getElementById('loginModal'));
+                        if (m) m.hide();
+                        $('#login-feedback').empty();
+                    }, 800);
+                }
+            },
+            error: function () {
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-right-to-bracket me-1"></i> Đăng nhập');
+                $('#login-feedback').html('<span class="text-danger">Lỗi kết nối khi đăng nhập.</span>');
+            }
+        });
+    });
+
+    // ============================================================
+    // 4. CƠ CHẾ THÍCH ỨNG LỘ TRÌNH (ADAPTIVE REPLANNING) & GIẢI THÍCH AI
+    // ============================================================
+    function simulateAdaptiveReplan(disruptionType) {
+        if (!tripState.sessionId) {
+            alert('Vui lòng tạo hoặc chọn một lịch trình trước khi thử nghiệm cơ chế thích ứng AI.');
+            return;
+        }
+
+        const iconMap = { rain: '🌧️', traffic: '🚗', delay: '⏰' };
+        const titleMap = {
+            rain: 'AI Đề xuất Thích ứng: Tránh Mưa Gió 🌧️',
+            traffic: 'AI Đề xuất Thích ứng: Né Ùn Tắc Giao Thông 🚗',
+            delay: 'AI Đề xuất Thích ứng: Điều Chỉnh Giờ Mở Cửa ⏰'
+        };
+
+        const $banner = $('#adaptive-replan-banner');
+        $('#adaptive-banner-icon').text(iconMap[disruptionType] || '🔄');
+        $('#adaptive-banner-title').text(titleMap[disruptionType] || 'AI Đề xuất Thích ứng Lộ trình');
+        $('#adaptive-banner-desc').html('<i class="fa-solid fa-spinner fa-spin me-1"></i> AI đang phân tích dữ liệu thực tế và tính toán lại lộ trình tối ưu...');
+        $banner.removeClass('d-none');
+
+        $.ajax({
+            url: `${API_BASE}/api/replan/simulate`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                session_id: tripState.sessionId,
+                disruption_type: disruptionType
+            }),
+            success: function (res) {
+                if (res.status === 'success' && res.itinerary) {
+                    setCurrentItinerary(res.itinerary);
+                    refreshCurrentItinerary();
+
+                    const explanation = res.ai_explanation || 'AI đã tái tối ưu lại lịch trình cho phù hợp với điều kiện thực tế.';
+                    const firstSentence = explanation.split('\n')[0].replace(/\*\*/g, '');
+                    $('#adaptive-banner-desc').text(firstSentence);
+
+                    // Mở khung chat AI và ghi lời giải thích chi tiết
+                    $('#global-ai-assistant').removeClass('d-none');
+                    $('#ai-map-chat').addClass('open');
+                    appendChatBubble(
+                        `<div class="fw-bold mb-1 text-primary"><i class="fa-solid fa-wand-magic-sparkles me-1"></i> Thông báo Thích ứng AI (${iconMap[disruptionType] || '🔄'})</div>${explanation.replace(/\n\n/g, '<br><br>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}`,
+                        'assistant'
+                    );
+
+                    showCrudBanner(`AI đã cập nhật lộ trình thích ứng theo điều kiện thực tế!`);
+                } else {
+                    $('#adaptive-banner-desc').text('Không có thay đổi cần áp dụng hoặc lịch trình hiện tại đã tối ưu.');
+                }
+            },
+            error: function (xhr) {
+                $('#adaptive-banner-desc').html(
+                    '<span class="text-danger">Không thể thực hiện thích ứng: ' + firstDefined(xhr.responseJSON && xhr.responseJSON.detail, 'Lỗi kết nối.') + '</span>'
+                );
+            }
+        });
+    }
+
+    $('.btn-sim-replan').on('click', function () {
+        const dtype = $(this).data('type') || 'rain';
+        simulateAdaptiveReplan(dtype);
+    });
+
+    $('#btn-close-adaptive-banner').on('click', function () {
+        $('#adaptive-replan-banner').addClass('d-none');
+    });
+
+    $('#btn-open-adaptive-chat').on('click', function () {
+        $('#global-ai-assistant').removeClass('d-none');
+        $('#ai-map-chat').addClass('open');
+        const $log = $('#ai-map-chat-log');
+        $log.scrollTop($log[0].scrollHeight);
+    });
+
+    // Khởi tạo tải profile ban đầu
+    loadUserProfile();
 
     // ============================================================
     // ADMIN: IMPORT EXCEL

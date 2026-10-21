@@ -76,6 +76,11 @@
 
             <!-- Right: Notifications & User Account -->
             <div class="navbar-right">
+                <button type="button" class="icon-btn position-relative" id="btn-quick-favorites" data-bs-toggle="modal" data-bs-target="#favoritesModal" aria-label="Địa điểm yêu thích" title="Bộ sưu tập yêu thích">
+                    <i class="fa-solid fa-heart text-danger"></i>
+                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" id="quick-fav-badge" style="font-size: 0.65rem; display: none;">0</span>
+                </button>
+
                 <button type="button" class="icon-btn" aria-label="Thông báo">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
@@ -87,16 +92,25 @@
                 <!-- Account Profile Dropdown Trigger -->
                 <div class="dropdown">
                     <button type="button" class="user-profile-btn" data-bs-toggle="dropdown" aria-expanded="false">
-                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Ảnh đại diện người dùng" class="user-avatar">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Ảnh đại diện người dùng" class="user-avatar" id="nav-user-avatar">
                         <div class="user-info text-start d-none d-sm-block">
-                            <div class="user-name">Du khách Hà Nội</div>
-                            <div class="user-handle">@traveler_hn</div>
+                            <div class="user-name" id="nav-user-name">Du khách Hà Nội</div>
+                            <div class="user-handle" id="nav-user-handle">@traveler_hn</div>
                         </div>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="heroicon-xs text-secondary ms-1">
                             <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                         </svg>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-4 mt-2 p-2">
+                        <li>
+                            <a class="dropdown-item rounded-3 py-2 d-flex align-items-center justify-content-between gap-2" href="#" id="nav-btn-open-favorites" data-bs-toggle="modal" data-bs-target="#favoritesModal">
+                                <div class="d-flex align-items-center gap-2">
+                                    <i class="fa-solid fa-heart text-danger"></i>
+                                    <span>Địa điểm yêu thích</span>
+                                </div>
+                                <span class="badge bg-danger rounded-pill" id="nav-favorites-badge">0</span>
+                            </a>
+                        </li>
                         <li>
                             <a class="dropdown-item rounded-3 py-2 d-flex align-items-center gap-2" href="#" data-bs-toggle="modal" data-bs-target="#accountModal">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
@@ -438,6 +452,43 @@
                             </div>
                         </div>
 
+                        <!-- BANNER THÍCH ỨNG AI (Adaptive Replanning Alert & Explanation) -->
+                        <div id="adaptive-replan-banner" class="adaptive-replan-banner d-none" role="status">
+                            <div class="d-flex align-items-start gap-2">
+                                <span class="adaptive-badge-icon" id="adaptive-banner-icon">🌧️</span>
+                                <div class="flex-grow-1 min-w-0">
+                                    <div class="d-flex align-items-center justify-content-between mb-1">
+                                        <strong class="adaptive-banner-title" id="adaptive-banner-title">AI Đề xuất Thích ứng Lộ trình</strong>
+                                        <button type="button" class="btn-close btn-close-sm" id="btn-close-adaptive-banner" aria-label="Đóng cảnh báo"></button>
+                                    </div>
+                                    <div class="adaptive-banner-desc mb-2" id="adaptive-banner-desc"></div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <button type="button" class="btn btn-sm btn-outline-primary py-1 px-2" id="btn-open-adaptive-chat" style="font-size: 0.75rem;">
+                                            <i class="fa-solid fa-comments me-1"></i> Xem giải thích AI
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- THANH CÔNG CỤ MÔ PHỎNG THÍCH ỨNG AI (DEMO & TEST ADAPTIVE REPLAN) -->
+                        <div class="adaptive-quick-sim-bar mb-2 d-flex align-items-center justify-content-between p-2 rounded-3 border" style="background: #F8FAFC; border-color: #E2E8F0 !important;">
+                            <span class="small text-secondary fw-semibold">
+                                <i class="fa-solid fa-wand-magic-sparkles text-primary me-1"></i>Thử thích ứng AI:
+                            </span>
+                            <div class="d-flex align-items-center gap-1">
+                                <button type="button" class="btn btn-xs btn-outline-secondary btn-sim-replan" data-type="rain" title="Mô phỏng trời mưa để xem AI đổi lộ trình sang điểm trong nhà">
+                                    🌧️ Mưa
+                                </button>
+                                <button type="button" class="btn btn-xs btn-outline-secondary btn-sim-replan" data-type="traffic" title="Mô phỏng ùn tắc xe cộ để AI đổi thứ tự di chuyển">
+                                    🚗 Kẹt xe
+                                </button>
+                                <button type="button" class="btn btn-xs btn-outline-secondary btn-sim-replan" data-type="delay" title="Mô phỏng trễ giờ mở cửa">
+                                    ⏰ Trễ giờ
+                                </button>
+                            </div>
+                        </div>
+
                         <!-- Thông báo phản hồi khi thao tác CRUD trực tiếp -->
                         <div id="crud-feedback-banner" class="crud-feedback-banner d-none" role="status"></div>
 
@@ -543,11 +594,16 @@
                         <span class="text-secondary" style="font-size: 0.72rem;">Tinh chỉnh lộ trình đang chọn</span>
                     </div>
                 </div>
-                <button type="button" id="btn-close-ai-chat" class="icon-btn-sm" aria-label="Thu gọn khung chat">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="heroicon-sm">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                    </svg>
-                </button>
+                <div class="d-flex align-items-center gap-1">
+                    <button type="button" id="btn-clear-ai-chat" class="icon-btn-sm text-secondary" title="Xóa lịch sử chat" aria-label="Xóa lịch sử chat">
+                        <i class="fa-regular fa-trash-can" style="font-size: 0.85rem;"></i>
+                    </button>
+                    <button type="button" id="btn-close-ai-chat" class="icon-btn-sm" aria-label="Thu gọn khung chat">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="heroicon-sm">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                        </svg>
+                    </button>
+                </div>
             </div>
             <div id="ai-map-chat-log" class="ai-map-chat-log">
                 <div class="chat-bubble assistant">
@@ -760,18 +816,21 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
                 </div>
                 <div class="modal-body pt-3">
-                    <p class="text-secondary small mb-4">Lưu lại lịch trình yêu thích và đồng bộ trên mọi thiết bị của bạn.</p>
-                    <form onsubmit="event.preventDefault(); bootstrap.Modal.getInstance(this.closest('.modal')).hide();">
+                    <p class="text-secondary small mb-4">Lưu lại lịch trình yêu thích và đồng bộ dữ liệu tài khoản của bạn.</p>
+                    <form id="login-form">
                         <div class="mb-3">
-                            <label for="login_email" class="field-label">Email</label>
-                            <input type="email" id="login_email" class="form-control clean-input" placeholder="ban@example.com" required>
+                            <label for="login_email" class="field-label">Email tài khoản</label>
+                            <input type="email" id="login_email" class="form-control clean-input" value="traveler@teravue.vn" placeholder="ban@example.com" required>
                         </div>
                         <div class="mb-4">
                             <label for="login_password" class="field-label">Mật khẩu</label>
-                            <input type="password" id="login_password" class="form-control clean-input" placeholder="••••••••" required>
+                            <input type="password" id="login_password" class="form-control clean-input" value="123456" placeholder="••••••••">
                         </div>
-                        <button type="submit" class="btn-primary-cta w-100 py-2">Đăng nhập</button>
+                        <button type="submit" id="btn-submit-login" class="btn-primary-cta w-100 py-2">
+                            <i class="fa-solid fa-right-to-bracket me-1"></i> Đăng nhập
+                        </button>
                     </form>
+                    <div id="login-feedback" class="mt-2 text-center small fw-semibold"></div>
                 </div>
             </div>
         </div>
@@ -786,17 +845,47 @@
                 </div>
                 <div class="modal-body">
                     <div class="d-flex align-items-center gap-3 mb-4 p-3 rounded-4" style="background: var(--bg-secondary);">
-                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Avatar" class="rounded-circle" width="56" height="56">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Avatar" class="rounded-circle" id="profile-avatar-img" width="56" height="56">
                         <div>
-                            <h6 class="fw-bold mb-0">Du khách Hà Nội</h6>
-                            <div class="small text-secondary">traveler@teravue.vn</div>
+                            <h6 class="fw-bold mb-0" id="profile-display-name">Du khách Hà Nội</h6>
+                            <div class="small text-secondary" id="profile-display-email">traveler@teravue.vn</div>
                         </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="profile_name_input" class="field-label">Họ và tên</label>
+                        <input type="text" id="profile_name_input" class="form-control clean-input" value="Du khách Hà Nội">
                     </div>
                     <div class="mb-3">
                         <label for="profile_pref" class="field-label">Gu du lịch mặc định</label>
                         <input type="text" id="profile_pref" class="form-control clean-input" value="Yên tĩnh, thích cà phê cổ điển & di tích văn hóa">
                     </div>
-                    <button type="button" class="btn-primary-clean w-100 mt-2" data-bs-dismiss="modal">Lưu thông tin</button>
+                    <button type="button" id="btn-save-profile" class="btn-primary-clean w-100 mt-2">
+                        <i class="fa-solid fa-floppy-disk me-1"></i> Lưu thông tin
+                    </button>
+                    <div id="profile-save-feedback" class="mt-2 text-center small fw-semibold"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Modal Danh Sách Yêu Thích (#favoritesModal) -->
+    <div class="modal fade" id="favoritesModal" tabindex="-1" aria-labelledby="favoritesModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="section-eyebrow text-danger"><i class="fa-solid fa-heart me-1"></i> Bộ sưu tập cá nhân</span>
+                        <h5 class="modal-title fw-bold" id="favoritesModalLabel">Địa điểm yêu thích đã lưu</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="favorites-list-container" class="crud-candidates-list" style="max-height: 480px; overflow-y: auto;">
+                        <div class="text-center py-5 text-secondary">
+                            <i class="fa-solid fa-spinner fa-spin fa-2x mb-2 text-primary"></i>
+                            <div>Đang tải danh sách yêu thích...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

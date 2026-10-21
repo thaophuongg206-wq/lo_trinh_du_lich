@@ -64,6 +64,9 @@ class TripSession:
         # Điểm phải giữ lại khi tính lại lịch trình (must-visit).
         self.pinned_ids: set = set()
 
+        # Lịch sử hội thoại với AI trong phiên (multi-turn chat)
+        self.chat_history: List[dict] = []
+
         self.created_at: float = time.time()
         self.updated_at: float = time.time()
 
@@ -170,6 +173,38 @@ class TripSession:
                 self.pinned_ids.add(i)
         self.touch()
 
+    # ---------------- chat history (multi-turn AI) ----------------
+
+    def add_chat_message(
+        self,
+        role: str,
+        content: str,
+        options: Optional[List[dict]] = None,
+        target_place_id: Optional[str] = None,
+        target_place_name: Optional[str] = None,
+        meta: Optional[dict] = None,
+    ) -> dict:
+        msg = {
+            "id": str(uuid.uuid4())[:8],
+            "role": role,
+            "content": content,
+            "options": options or [],
+            "target_place_id": target_place_id,
+            "target_place_name": target_place_name,
+            "meta": meta or {},
+            "timestamp": time.time(),
+        }
+        self.chat_history.append(msg)
+        self.touch()
+        return msg
+
+    def get_chat_history(self) -> List[dict]:
+        return list(self.chat_history)
+
+    def clear_chat_history(self) -> None:
+        self.chat_history = []
+        self.touch()
+
     # ---------------- serialize ----------------
 
     def snapshot(self) -> dict:
@@ -182,6 +217,7 @@ class TripSession:
             "excluded_ids": sorted(self.excluded_ids),
             "pinned_ids": sorted(self.pinned_ids),
             "current_place_ids": self.current_place_ids(),
+            "chat_history": self.get_chat_history(),
             "updated_at": self.updated_at,
         }
 

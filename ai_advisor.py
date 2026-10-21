@@ -3,7 +3,7 @@ import json
 import math
 import requests
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -66,14 +66,28 @@ class AISuggestResponse(BaseModel):
     timeline: List[TimelinePeriod] = []
 
 
+class AIRefineOption(BaseModel):
+    place_id: str
+    ten: str
+    loai_hinh: str = ""
+    rating: Optional[float] = None
+    so_luot_danh_gia: Optional[int] = None
+    dia_chi: str = ""
+    url_hinh_anh: str = ""
+    distance_km: Optional[float] = None
+    reason: str = ""
+    action: str = "replace"     # "replace" | "add"
+    tags: List[str] = []
+
+
 class AIRefineRequest(BaseModel):
     """Yêu cầu tiếp nối trên màn hình bản đồ: AI phải hiểu itinerary hiện tại
     (current_ids, đúng thứ tự đang hiển thị) và câu lệnh tự do của người dùng
     (VD: 'Bỏ quán C đi', 'Thêm quán ăn trưa', 'Tôi muốn đi chậm hơn')."""
     region: str = "Hanoi"
     vehicle_type: str = "xe_may"
-    start_time: str
-    end_time: str
+    start_time: str = "08:00"
+    end_time: str = "17:00"
     user_preference: str = ""
     current_ids: List[str]
     instruction: str
@@ -81,6 +95,7 @@ class AIRefineRequest(BaseModel):
     session_id: Optional[str] = None   # Để ghi excluded_ids vào state backend (mục 6)
     trip_date: str = ""                # Ngày đi, tùy chọn, làm bối cảnh cho prompt
     start_point: str = ""              # Tên điểm xuất phát, tùy chọn, làm bối cảnh cho prompt
+    target_place_id: Optional[str] = None  # ID điểm muốn thay thế hoặc tham chiếu gần đây
 
 
 class AIRefineResponse(BaseModel):
@@ -90,6 +105,11 @@ class AIRefineResponse(BaseModel):
     removed_ids: List[str] = []        # Điểm vừa bị loại trong lượt này
     excluded_ids: List[str] = []       # Toàn bộ ràng buộc loại trừ của phiên
     session_id: Optional[str] = None
+    intent: str = "options"            # "options" | "direct" | "select_previous" | "chat"
+    target_place_id: Optional[str] = None
+    target_place_name: Optional[str] = None
+    options: List[AIRefineOption] = []
+    chat_history: List[dict] = []
 
 
 # ============================================================
@@ -720,38 +740,536 @@ def suggest_route(req: AISuggestRequest):
     )
 
 
+def analyze_complex_refine_request(
+    instruction: str,
+    current_points: List[dict],
+    all_points: List[dict],
+    excluded_ids: set,
+    target_place_id: Optional[str] = None,
+    session: Optional[Any] = None,
+    start_point_str: str = "",
+) -> Tuple[str, Optional[dict], List[dict], str, List[str]]:
+    """
+    Phân tích yêu cầu AI Refine phức tạp (Ví dụ: "Tìm chỗ yên tĩnh hơn gần đây",
+    "Thay quán này bằng nơi phù hợp trời mưa", "Tìm quán cafe view đẹp quanh đây"...).
+    
+    Thay vì tự tiện quyết định thay thế bằng 1 điểm duy nhất, AI trả về:
+    - intent: "options" (trả về 2-3 lựa chọn để user chọn), "select_previous" (user chọn lại từ option trước), "direct" (lệnh bỏ điểm trực tiếp)
+    - target_pt: Địa điểm đang xem xét thay thế (nếu có)
+    - options: Danh sách 2-4 lựa chọn chi tiết (id, tên, rating, khoảng cách, lý do, tags, action)
+    - advice_text: Lời khuyên thân thiện, ấm áp
+    - suggested_ids: Danh sách gợi ý mặc định (tương thích ngược với client cũ)
+    """
+    from api.preferences import _strip_diacritics
+    from api.scheduling import calc_dist
+
+    raw_text = (instruction or "").strip()
+    norm_text = _strip_diacritics(raw_text).lower()
+
+    # 1. KIỂM TRA LỰA CHỌN TỪ MULTI-TURN CHAT TRƯỚC ĐÓ
+    if session and session.get_chat_history():
+        hist = session.get_chat_history()
+        last_opts_msg = None
+        for msg in reversed(hist):
+            if msg.get("role") == "assistant" and msg.get("options"):
+                last_opts_msg = msg
+                break
+        
+        if last_opts_msg and last_opts_msg.get("options"):
+            prev_opts = last_opts_msg["options"]
+            selected_idx = None
+
+            # Pattern: "chọn 1", "chọn số 2", "lấy quán 3", "phương án 1"...
+            m = re.search(r"(?:chon|lay|lua|chot|phuong an|so|quan|cai thu)\s*#?([1-4])\b", norm_text)
+            if m:
+                idx_num = int(m.group(1))
+                if 1 <= idx_num <= len(prev_opts):
+                    selected_idx = idx_num - 1
+            elif "thu nhat" in norm_text or "dau tien" in norm_text:
+                selected_idx = 0
+            elif "thu hai" in norm_text or "thu 2" in norm_text:
+                if len(prev_opts) >= 2:
+                    selected_idx = 1
+            elif "thu ba" in norm_text or "thu 3" in norm_text:
+                if len(prev_opts) >= 3:
+                    selected_idx = 2
+            else:
+                for idx, o in enumerate(prev_opts):
+                    o_name = _strip_diacritics(o.get("ten", "")).lower()
+                    if o_name and o_name in norm_text:
+                        selected_idx = idx
+                        break
+
+            if selected_idx is not None:
+                chosen_opt = prev_opts[selected_idx]
+                target_id = last_opts_msg.get("target_place_id")
+                target_name = last_opts_msg.get("target_place_name")
+                current_pids = [str(p["id"]) for p in current_points]
+
+                if target_id and str(target_id) in current_pids:
+                    new_pids = [chosen_opt["place_id"] if str(pid) == str(target_id) else str(pid) for pid in current_pids]
+                    advice = f"Tuyệt vời! Mình đã thay '{target_name or 'địa điểm cũ'}' bằng '{chosen_opt['ten']}' vào lịch trình cho bạn."
+                else:
+                    new_pids = list(current_pids)
+                    if chosen_opt["place_id"] not in new_pids:
+                        new_pids.append(chosen_opt["place_id"])
+                    advice = f"Tuyệt vời! Mình đã thêm '{chosen_opt['ten']}' vào lịch trình cho bạn."
+
+                return "select_previous", None, [chosen_opt], advice, new_pids
+
+    # 2. KIỂM TRA LỆNH XÓA / BỎ ĐIỂM TRỰC TIẾP
+    has_remove = _has_remove_intent(raw_text)
+    has_find_or_replace = any(w in norm_text for w in (
+        "thay the", "thay bang", "thay sang", "thay quan", "thay diem", "thay cho",
+        "doi sang", "doi thanh", "doi quan", "doi diem", "doi cho",
+        "tim cho", "tim quan", "tim diem", "tim them", "goi y", "chuyen sang", "cho nao", "quan nao"
+    ))
+    if has_remove and not has_find_or_replace:
+        return "direct", None, [], "", []
+
+    # 3. NHẬN DIỆN CÁC TIÊU CHÍ PHỨC TẠP
+    is_rain = any(k in norm_text for k in ("mua", "troi mua", "trong nha", "mai che", "dieu hoa", "tranh mua", "tranh nang", "rain", "indoor"))
+    is_quiet = any(k in norm_text for k in ("yen tinh", "thanh binh", "chill", "tranh on", "doc sach", "tinh lang", "yen ang", "quiet", "peaceful"))
+    is_view = any(k in norm_text for k in ("view dep", "chup anh", "song ao", "check in", "checkin", "ngam canh", "scenic", "view"))
+    is_food = any(k in norm_text for k in ("an uong", "an trua", "quan an", "mon ngon", "dac san", "pho", "bun cha", "com", "food", "lunch"))
+    is_cafe = any(k in norm_text for k in ("cafe", "ca phe", "coffee", "tra", "do uong"))
+    is_culture = any(k in norm_text for k in ("bao tang", "di tich", "lich su", "van hoa", "tam linh", "chua", "den", "museum", "history"))
+    is_budget = any(k in norm_text for k in ("gia re", "binh dan", "tiet kiem", "gia hop ly", "re", "cheap"))
+    is_near = any(k in norm_text for k in ("gan day", "quanh day", "gan day hon", "gan", "near", "around"))
+
+    # Nếu không khớp tiêu chí phức tạp nào và không có ý định thay/tìm, chuyển cho LLM tổng quát
+    if not any([is_rain, is_quiet, is_view, is_food, is_cafe, is_culture, is_budget, is_near, has_find_or_replace]):
+        return "general", None, [], "", []
+
+    # 4. XÁC ĐỊNH TARGET POINT ĐỂ THAY THẾ (NẾU CÓ)
+    target_pt = None
+    if target_place_id:
+        target_pt = next((p for p in current_points if str(p.get("id")) == str(target_place_id)), None)
+
+    if not target_pt:
+        for p in current_points:
+            p_name_norm = _strip_diacritics(p.get("ten", "")).lower()
+            if p_name_norm and (p_name_norm in norm_text or any(word in norm_text for word in p_name_norm.split() if len(word) > 4)):
+                target_pt = p
+                break
+
+    if not target_pt and any(w in norm_text for w in ("thay quan", "thay diem", "thay cho", "doi quan", "doi diem", "thay nơi")):
+        if is_rain:
+            target_pt = next((p for p in current_points if p.get("trong_nha_ngoai_troi") == "ngoai_troi"), None)
+        if not target_pt and is_quiet:
+            target_pt = next((p for p in current_points if "dong_khach" in ((p.get("review_insight") or {}).get("ma_dac_diem") or [])), None)
+        if not target_pt and (is_cafe or is_food):
+            target_pt = next((p for p in current_points if p.get("loai_hinh") in ("Cafe", "Ăn uống")), None)
+        if not target_pt and current_points:
+            non_gps = [p for p in current_points if p.get("id") != "gps_current"]
+            if non_gps:
+                target_pt = non_gps[-1]
+
+    ref_pt = target_pt or (current_points[-1] if current_points else None)
+
+    # 5. TÌM VÀ ĐÁNH GIÁ CÁC ỨNG VIÊN
+    current_pids = {str(p["id"]) for p in current_points}
+    pool = [p for p in all_points if str(p["id"]) not in current_pids and str(p["id"]) not in excluded_ids]
+
+    scored = []
+    for cand in pool:
+        score = 0.0
+        badges = []
+        reasons = []
+
+        dist = None
+        if ref_pt and "lat" in cand and "lon" in cand and "lat" in ref_pt and "lon" in ref_pt:
+            try:
+                dist = calc_dist(ref_pt, cand)
+            except Exception:
+                dist = None
+
+        the_set = {t.get("ma") for t in (cand.get("the") or []) if isinstance(t, dict)}
+        insight = cand.get("review_insight") or {}
+        traits = set(insight.get("ma_dac_diem") or [])
+        noi_bat = insight.get("noi_bat") or []
+        io = cand.get("trong_nha_ngoai_troi")
+        loai = cand.get("loai_hinh") or ""
+        rating = float(cand.get("rating") or cand.get("diem_gia_tri") or 4.0)
+
+        # Tiêu chí trời mưa / trong nhà
+        if is_rain:
+            if io == "trong_nha":
+                score += 7.0
+                badges.append("🌧️ Trong nhà")
+                reasons.append("Không gian hoàn toàn trong nhà, ấm áp, có mái che tiện lợi không lo thời tiết.")
+            elif io == "ca_hai":
+                score += 3.5
+                badges.append("🏛️ Trong nhà & mái che")
+            elif io == "ngoai_troi":
+                score -= 20.0
+            if loai == "TTTM":
+                score += 5.0
+                badges.append("🎬 Mua sắm & Rạp phim")
+                reasons.append("Tổ hợp mua sắm, vui chơi giải trí và ăn uống trong nhà tiện nghi.")
+            elif loai == "Cafe" and io != "ngoai_troi":
+                score += 4.0
+                badges.append("☕ Ấm cúng")
+
+        # Tiêu chí yên tĩnh
+        if is_quiet:
+            if "dong_khach" in traits:
+                score -= 12.0
+            if "yen_tinh" in the_set or "yen_tinh" in traits:
+                score += 7.0
+                badges.append("🤫 Yên tĩnh")
+                reasons.append("Không gian thanh bình, tĩnh lặng, khách khen rất phù hợp để thư giãn và đọc sách.")
+            elif loai == "Cafe":
+                score += 2.5
+                badges.append("☕ Không gian chill")
+
+        # Tiêu chí view đẹp / chụp ảnh
+        if is_view:
+            if "view_dep" in the_set or "view_dep" in traits:
+                score += 6.0
+                badges.append("📸 View đẹp")
+                reasons.append("Tầm nhìn đẹp, thoáng đãng, nhiều góc check-in ấn tượng.")
+            if "chup_anh" in the_set or "check_in" in traits:
+                score += 3.5
+                badges.append("✨ Sống ảo")
+
+        # Tiêu chí ăn uống
+        if is_food:
+            if loai == "Ăn uống" or "an_uong" in the_set or "an_trua" in the_set:
+                score += 6.0
+                badges.append("🍜 Ẩm thực ngon")
+                if "ngon" in traits:
+                    reasons.append("Ẩm thực đặc sản thơm ngon, hương vị đậm đà được thực khách đánh giá cao.")
+
+        # Tiêu chí cafe
+        if is_cafe:
+            if loai == "Cafe" or "cafe" in the_set:
+                score += 5.5
+                badges.append("☕ Cà phê")
+
+        # Tiêu chí văn hóa / di tích
+        if is_culture:
+            if "lich_su" in the_set or "van_hoa" in the_set or loai == "Tham quan":
+                score += 6.0
+                badges.append("🏛️ Di tích lịch sử")
+                reasons.append("Di tích lịch sử văn hóa ý nghĩa, nhiều hiện vật và kiến trúc đặc sắc.")
+
+        # Tiêu chí giá rẻ
+        if is_budget:
+            m = cand.get("muc_gia")
+            if m is not None and m <= 1:
+                score += 4.5
+                badges.append("💰 Giá bình dân")
+            elif "gia_hop_ly" in traits:
+                score += 3.0
+                badges.append("💰 Giá hợp lý")
+            elif m is not None and m >= 3:
+                score -= 6.0
+
+        # Khoảng cách gần
+        if dist is not None:
+            if is_near:
+                score += max(0.0, 7.0 - dist * 1.2)
+            else:
+                score += max(0.0, 3.5 - dist * 0.5)
+            badges.append(f"📍 Cách {dist:.1f} km")
+
+        # Điểm chất lượng chung
+        score += (rating / 5.0) * 2.0
+        if noi_bat and not reasons:
+            reasons.append(f"Khách hay khen: {', '.join(noi_bat[:2])}")
+
+        if not reasons:
+            desc = cand.get("mo_ta") or cand.get("thong_tin_chi_tiet") or ""
+            if desc:
+                reasons.append(desc[:85].strip() + "...")
+            else:
+                reasons.append(f"Địa điểm {loai} chất lượng, được nhiều người yêu thích.")
+
+        scored.append({
+            "point": cand,
+            "score": score,
+            "dist": dist,
+            "badges": badges,
+            "reason": " ".join(reasons),
+        })
+
+    scored.sort(key=lambda x: -x["score"])
+    top_picks = [item for item in scored if item["score"] > 0][:3]
+    if not top_picks and pool:
+        top_picks = scored[:3]
+
+    if not top_picks:
+        return "general", None, [], "", []
+
+    options = []
+    action = "replace" if target_pt else "add"
+    for item in top_picks:
+        p = item["point"]
+        opt = {
+            "place_id": str(p["id"]),
+            "ten": p["ten"],
+            "loai_hinh": p.get("loai_hinh", ""),
+            "rating": float(p.get("rating") or p.get("diem_gia_tri") or 4.0),
+            "so_luot_danh_gia": p.get("so_luot_danh_gia"),
+            "dia_chi": p.get("dia_chi", ""),
+            "url_hinh_anh": p.get("url_hinh_anh", ""),
+            "distance_km": round(item["dist"], 1) if item["dist"] is not None else None,
+            "reason": item["reason"],
+            "action": action,
+            "tags": item["badges"][:3],
+        }
+        options.append(opt)
+
+    target_name = target_pt["ten"] if target_pt else None
+    if target_pt:
+        if is_rain:
+            advice_text = f"Mình gợi ý {len(options)} địa điểm trong nhà ấm cúng, view đẹp, rất phù hợp khi trời mưa quanh khu vực '{target_name}' để bạn cân nhắc thay thế:"
+        elif is_quiet:
+            advice_text = f"Mình gợi ý {len(options)} không gian yên tĩnh, thư thái và ít ồn ào gần '{target_name}' để bạn lựa chọn:"
+        elif is_view:
+            advice_text = f"Mình gợi ý {len(options)} quán có view đẹp và nhiều góc chụp ảnh ấn tượng quanh '{target_name}':"
+        else:
+            advice_text = f"Mình gợi ý {len(options)} lựa chọn phù hợp nhất quanh khu vực '{target_name}'. Bạn xem và chọn điểm ưng ý nhé:"
+    else:
+        if is_rain:
+            advice_text = f"Dưới đây là {len(options)} địa điểm trong nhà không ngại mưa gió gần đây. Bạn chọn nơi muốn ghé nhé:"
+        elif is_quiet:
+            advice_text = f"Dưới đây là {len(options)} không gian yên tĩnh, thư thái gần đây. Bạn chọn địa điểm ưng ý nhé:"
+        else:
+            advice_text = f"Dưới đây là {len(options)} địa điểm được đánh giá cao, rất phù hợp với yêu cầu '{raw_text}' của bạn:"
+
+    if target_pt and options:
+        suggested_ids = [options[0]["place_id"] if str(pid) == str(target_pt["id"]) else str(pid) for pid in [p["id"] for p in current_points]]
+    elif options:
+        suggested_ids = [str(p["id"]) for p in current_points] + [options[0]["place_id"]]
+    else:
+        suggested_ids = [str(p["id"]) for p in current_points]
+
+    return "options", target_pt, options, advice_text, suggested_ids
+
+
+def generate_fallback_refine(
+    instruction: str,
+    current_points: List[dict],
+    all_points: List[dict],
+    excluded_ids: set,
+) -> Tuple[str, List[str], List[str]]:
+    """
+    Fallback thông minh khi LLM offline hoặc gặp sự cố kết nối.
+    Xử lý các lệnh phổ biến:
+    - Bỏ điểm theo tên hoặc theo số thứ tự (1, 2, cuối, đầu)
+    - Giảm bớt điểm khi đi chậm / mệt
+    - Thêm điểm (ăn trưa, cafe, checkin, tham quan) theo category và rating cao
+    - Luôn trả về lời giải thích ấm áp, tự nhiên.
+    """
+    import re
+    from api.preferences import _strip_diacritics
+    from categories import category_of
+
+    raw_text = (instruction or "").strip()
+    norm = _strip_diacritics(raw_text).lower()
+
+    current_ids = [str(p["id"]) for p in current_points]
+
+    # 1. KIỂM TRA Ý ĐỊNH BỎ ĐIỂM
+    if _has_remove_intent(raw_text):
+        # 1.1 Khớp theo tên địa điểm trong current_points (ưu tiên khớp nguyên cụm tên dài nhất)
+        matched_point = None
+        exact_matches = []
+        for p in current_points:
+            p_name = _strip_diacritics(p.get("ten", "")).lower()
+            p_clean = re.sub(r"\(.*?\)", "", p_name).strip()
+            if p_clean and p_clean in norm:
+                exact_matches.append((len(p_clean), p))
+            elif p_name and p_name in norm:
+                exact_matches.append((len(p_name), p))
+
+        if exact_matches:
+            exact_matches.sort(key=lambda x: -x[0])
+            matched_point = exact_matches[0][1]
+        else:
+            stopwords = {"diem", "quan", "cho", "noi", "center", "plaza", "mall", "rap", "pho", "duong"}
+            best_score = 0
+            norm_words = set(re.findall(r"\w+", norm))
+            for p in current_points:
+                p_name = _strip_diacritics(p.get("ten", "")).lower()
+                p_words = set(re.findall(r"\w+", p_name)) - stopwords
+                if p_words:
+                    overlap = len(p_words & norm_words)
+                    if overlap > best_score and overlap >= 2:
+                        best_score = overlap
+                        matched_point = p
+
+        if matched_point:
+            drop_id = str(matched_point["id"])
+            new_ids = [pid for pid in current_ids if pid != drop_id]
+            advice = f"Mình đã loại bỏ '{matched_point['ten']}' khỏi lịch trình theo mong muốn của bạn."
+            return advice, new_ids, []
+
+        # 1.2 Khớp theo số thứ tự ("bỏ điểm 1", "bỏ điểm số 2", "bỏ quán 3", "bỏ 1"...)
+        m = re.search(r"(?:bo|xoa|loai|bot)\s+(?:(?:diem|quan|cai|so|thu)\s+)*#?([1-9])\b", norm)
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(current_points):
+                drop_pt = current_points[idx]
+                new_ids = [pid for i, pid in enumerate(current_ids) if i != idx]
+                advice = f"Mình đã loại bỏ điểm số {idx + 1} ('{drop_pt['ten']}') khỏi lịch trình của bạn."
+                return advice, new_ids, []
+
+        if any(w in norm for w in ("diem cuoi", "quan cuoi", "cho cuoi", "cai cuoi")):
+            if len(current_points) > 1:
+                drop_pt = current_points[-1]
+                new_ids = current_ids[:-1]
+                advice = f"Mình đã bỏ điểm cuối cùng ('{drop_pt['ten']}') khỏi lịch trình của bạn."
+                return advice, new_ids, []
+
+        if any(w in norm for w in ("diem dau", "quan dau", "cai dau")):
+            if len(current_points) > 1:
+                drop_pt = current_points[0]
+                new_ids = current_ids[1:]
+                advice = f"Mình đã bỏ điểm đầu tiên ('{drop_pt['ten']}') khỏi lịch trình của bạn."
+                return advice, new_ids, []
+
+        # 1.3 Ý định đi chậm hơn / mệt / giảm bớt
+        if any(w in norm for w in ("di cham", "nghi ngoi", "met", "thong tha", "giam bot")):
+            if len(current_points) > 2:
+                drop_pt = min(current_points, key=lambda p: float(p.get("rating") or p.get("diem_gia_tri") or 3.0))
+                new_ids = [pid for pid in current_ids if pid != str(drop_pt["id"])]
+                advice = f"Mình đã lược bớt '{drop_pt['ten']}' để bạn có thêm thời gian nghỉ ngơi và di chuyển thong thả hơn."
+                return advice, new_ids, []
+
+    # 2. KIỂM TRA Ý ĐỊNH THÊM ĐIỂM
+    is_food = any(w in norm for w in ("an uong", "an trua", "quan an", "mon ngon", "pho", "bun", "com", "food", "lunch", "an toi"))
+    is_cafe = any(w in norm for w in ("cafe", "ca phe", "coffee", "tra", "do uong"))
+    is_checkin = any(w in norm for w in ("checkin", "check in", "song ao", "chup anh", "view dep"))
+    is_culture = any(w in norm for w in ("bao tang", "di tich", "lich su", "van hoa", "chua", "den"))
+
+    target_cat = None
+    target_label = "địa điểm"
+    if is_food:
+        target_cat = "an_uong"
+        target_label = "quán ăn"
+    elif is_cafe:
+        target_cat = "cafe"
+        target_label = "quán cà phê"
+    elif is_checkin:
+        target_cat = "checkin"
+        target_label = "điểm check-in chụp ảnh"
+    elif is_culture:
+        target_cat = "tham_quan"
+        target_label = "điểm tham quan văn hóa"
+
+    if target_cat:
+        available_cands = [
+            p for p in all_points
+            if str(p["id"]) not in current_ids and str(p["id"]) not in excluded_ids
+            and category_of(p) == target_cat
+        ]
+        if not available_cands:
+            available_cands = [
+                p for p in all_points
+                if str(p["id"]) not in current_ids and str(p["id"]) not in excluded_ids
+            ]
+
+        if available_cands:
+            available_cands.sort(
+                key=lambda p: (
+                    float(p.get("rating") or p.get("diem_gia_tri") or 4.0),
+                    int(p.get("so_luot_danh_gia") or 0)
+                ),
+                reverse=True
+            )
+            picked = available_cands[0]
+            insert_pos = max(1, len(current_ids) // 2) if is_food else len(current_ids)
+            new_ids = list(current_ids)
+            new_ids.insert(insert_pos, str(picked["id"]))
+            rating_str = f" (đánh giá {picked.get('rating', 4.5)}⭐)" if picked.get("rating") else ""
+            advice = f"Mình đã bổ sung {target_label} '{picked['ten']}'{rating_str} vào lịch trình cho bạn."
+            return advice, new_ids, []
+
+    # 3. MẶC ĐỊNH
+    advice = "Hệ thống AI đang chạy chế độ an toàn. Mình đã ghi nhận yêu cầu và giữ vững các điểm đến tối ưu cho bạn."
+    return advice, list(current_ids), []
+
+
 @router.post("/api/ai-refine", response_model=AIRefineResponse)
 def refine_route(req: AIRefineRequest):
     """Tiếp nối hội thoại trên màn hình bản đồ: AI nhận itinerary hiện tại +
-    câu lệnh tự do của người dùng ('Bỏ C đi', 'Thêm quán ăn trưa'...), trả về
-    tập id đã cập nhật. Frontend gọi lại /api/optimize-route với
-    ai_selected_ids = suggested_ids để tính lại route/timeline/map."""
+    câu lệnh tự do của người dùng ('Bỏ C đi', 'Thêm quán ăn trưa', 'Tìm chỗ yên tĩnh hơn gần đây'...).
+    
+    Hỗ trợ:
+    - Trả về danh sách OPTIONS (lựa chọn) để user tự chọn thay vì ép 1 điểm duy nhất.
+    - Lưu trữ lịch sử hội thoại (chat_history) trong session.
+    - Nhận diện các yêu cầu phức tạp (trời mưa, yên tĩnh, view đẹp, gần đây...).
+    """
     from api.db import fetch_all_points
     from itinerary_store import store
-
-    try:
-        fmt = "%H:%M"
-        start = datetime.strptime(req.start_time, fmt)
-        end = datetime.strptime(req.end_time, fmt)
-        minutes = (end - start).total_seconds() / 60
-        if minutes <= 0:
-            minutes += 24 * 60
-    except Exception:
-        pass
 
     session = store.get(req.session_id)
     excluded = set(session.excluded_ids) if session else set()
 
-    all_points = fetch_all_points(vehicle_type=req.vehicle_type)
+    # Lưu tin nhắn của user vào chat_history trong session
+    if session is not None:
+        session.add_chat_message(role="user", content=req.instruction)
+
+    all_points = fetch_all_points(vehicle_type=req.vehicle_type, trip_date=req.trip_date)
     if not all_points:
         raise HTTPException(status_code=404, detail="Không có dữ liệu địa điểm phù hợp.")
 
     if excluded:
-        all_points = [p for p in all_points if p["id"] not in excluded]
+        all_points = [p for p in all_points if str(p["id"]) not in excluded]
 
-    id_to_point = {p["id"]: p for p in all_points}
-    current_points = [id_to_point[i] for i in req.current_ids if i in id_to_point]
+    id_to_point = {str(p["id"]): p for p in all_points}
+    current_points = [id_to_point[str(i)] for i in req.current_ids if str(i) in id_to_point]
 
+    # Phân tích yêu cầu AI Refine phức tạp (options, yên tĩnh, trời mưa, multi-turn selection...)
+    intent, target_pt, options, advice_text, suggested_ids = analyze_complex_refine_request(
+        req.instruction,
+        current_points,
+        all_points,
+        excluded,
+        target_place_id=req.target_place_id,
+        session=session,
+        start_point_str=req.start_point,
+    )
+
+    if intent in ("options", "select_previous") and options:
+        # Nếu người dùng vừa chọn từ option trước, đồng bộ ngay itinerary trong session
+        if intent == "select_previous" and session is not None and session.current_itinerary:
+            try:
+                from api.routers.itinerary import recalculate_route_from_places
+                cand_places = [id_to_point[str(pid)] for pid in suggested_ids if str(pid) in id_to_point]
+                if cand_places:
+                    updated_route, _ = recalculate_route_from_places(session, cand_places, ai_advice=advice_text)
+                    session.set_current_itinerary(updated_route)
+            except Exception:
+                pass
+
+        if session is not None:
+            session.add_chat_message(
+                role="assistant",
+                content=advice_text,
+                options=options,
+                target_place_id=str(target_pt["id"]) if target_pt else None,
+                target_place_name=target_pt["ten"] if target_pt else None,
+            )
+
+        return AIRefineResponse(
+            advice_text=advice_text,
+            suggested_ids=suggested_ids,
+            invalid_ids=[],
+            removed_ids=[],
+            excluded_ids=sorted(excluded),
+            session_id=req.session_id,
+            intent=intent,
+            target_place_id=str(target_pt["id"]) if target_pt else None,
+            target_place_name=target_pt["ten"] if target_pt else None,
+            options=options,
+            chat_history=session.get_chat_history() if session else [],
+        )
+
+    # 4. Khi là lệnh bỏ điểm hoặc yêu cầu tổng quát khác
     ranked_context = select_context_points(all_points, req.user_preference)
     context_points = list(current_points)
     context_ids = {p["id"] for p in context_points}
@@ -774,10 +1292,10 @@ def refine_route(req: AIRefineRequest):
         raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
         advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set, req.current_ids)
     except Exception:
-        # Fallback an toàn khi service AI lỗi
-        advice_text = "Mình đã ghi nhận mong muốn của bạn và cập nhật lại hành trình."
-        suggested_ids = [i for i in req.current_ids if i in valid_ids_set]
-        invalid_ids = []
+        # Fallback thông minh và an toàn khi service AI LLM lỗi hoặc offline
+        advice_text, suggested_ids, invalid_ids = generate_fallback_refine(
+            req.instruction, current_points, all_points, excluded
+        )
 
     # Chốt chặn cuối: id đã bị loại không được lọt ra ngoài
     suggested_ids = [i for i in suggested_ids if i not in excluded]
@@ -790,6 +1308,7 @@ def refine_route(req: AIRefineRequest):
             removed_ids = session.exclude(dropped)
         session.pin(suggested_ids)
         excluded = set(session.excluded_ids)
+        session.add_chat_message(role="assistant", content=advice_text)
 
     return AIRefineResponse(
         advice_text=advice_text,
@@ -798,4 +1317,7 @@ def refine_route(req: AIRefineRequest):
         removed_ids=removed_ids,
         excluded_ids=sorted(excluded),
         session_id=req.session_id,
+        intent="direct",
+        options=[],
+        chat_history=session.get_chat_history() if session else [],
     )
