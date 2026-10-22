@@ -97,30 +97,33 @@ def run_route_generation(request: OptimizationRequest,
                 "excluded_ids": sorted(excluded_ids),
             }
 
-    # 3c. TÍNH PREFERENCE SCORE CHO TỪNG ĐIỂM (BUG 1 FIX)
-    # user_preference + weight phải thực sự tham gia scoring/route generation,
-    # không chỉ được nhận vào rồi bỏ qua.
-    preference_keywords = _extract_keywords(request.user_preference)
-    pref_weight = request.weight / 100.0  # 0 = ưu tiên khoảng cách, 1 = ưu tiên đúng sở thích
-    for p in all_points:
-        p["preference_score"] = calculate_preference_score(p, preference_keywords)
-
-    # 3d. TRÍCH XUẤT SỞ THÍCH CÓ CẤU TRÚC (TAGS) ĐỂ THÍCH ỨNG LỘ TRÌNH
+    # 3c. TRÍCH XUẤT SỞ THÍCH CÓ CẤU TRÚC (TAGS) ĐỂ THÍCH ỨNG LỘ TRÌNH
     from services.parser import _extract_tags, _normalize_typos, _low, _strip
     norm_pref = _normalize_typos(request.user_preference or "")
     preferred_tags, avoid_tags = _extract_tags(_low(norm_pref), _strip(norm_pref))
 
-    has_specific_prefs = bool(preferred_tags and len(preferred_tags) <= 2)
+    # TÍNH PREFERENCE SCORE CHO TỪNG ĐIỂM (BUG 1 FIX + TAGS INTEGRATION)
+    # user_preference + weight + preferred_tags phải thực sự tham gia scoring/route generation
+    preference_keywords = _extract_keywords(request.user_preference)
+    pref_weight = request.weight / 100.0  # 0 = ưu tiên khoảng cách, 1 = ưu tiên đúng sở thích
+    for p in all_points:
+        p["preference_score"] = calculate_preference_score(p, preference_keywords, preferred_tags=preferred_tags)
+
+    has_specific_prefs = bool(preferred_tags and len(preferred_tags) <= 3)
     has_food = "food" in preferred_tags
     has_culture = ("culture" in preferred_tags) or ("nature" in preferred_tags)
     has_cafe = "cafe" in preferred_tags
     has_ent = ("entertainment" in preferred_tags) or ("shopping" in preferred_tags)
     has_photo = "photo" in preferred_tags
+    has_lively = ("lively" in preferred_tags) or any(w in norm_pref for w in ("nao nhiet", "soi dong", "nhon nhip", "tap nap", "quay"))
+    has_quiet = ("quiet" in preferred_tags) or any(w in norm_pref for w in ("yen tinh", "chill", "thu gian"))
     is_cafe_tour = any(kw in norm_pref for kw in ("cafe tour", "tour cafe", "cac quan cafe", "nhieu quan cafe", "cafe hopping"))
 
-    # Tập loại hình bắt buộc phải có mặt trong mọi route nếu người dùng yêu cầu 1-2 hoạt động cụ thể
+    has_specific_activity = bool(has_food or has_culture or has_cafe or has_ent or has_photo)
+
+    # Tập loại hình bắt buộc phải có mặt trong mọi route nếu người dùng yêu cầu 1-3 hoạt động cụ thể
     req_cats = set()
-    if has_specific_prefs and mode != "single":
+    if has_specific_activity and mode != "single":
         if has_ent:
             req_cats.add("tttm")
         if has_culture:
@@ -129,9 +132,11 @@ def run_route_generation(request: OptimizationRequest,
             req_cats.add("cafe")
         if has_food:
             req_cats.add("an_uong")
+        if has_photo and not has_culture:
+            req_cats.add("checkin")
 
-    # Pacing thong thả: khi người dùng chỉ yêu cầu 1-2 hoạt động cụ thể nhưng quỹ giờ dài (>= 4 tiếng)
-    is_relaxed_pacing = bool(has_specific_prefs and available_minutes >= 240)
+    # Pacing thong thả: CHỈ KHI người dùng có ý định yên tĩnh / thong thả, TUYỆT ĐỐI KHÔNG khi người dùng yêu cầu náo nhiệt/sôi động!
+    is_relaxed_pacing = bool((has_quiet or "thong_tha" in norm_pref) and not has_lively and available_minutes >= 240)
     if is_relaxed_pacing:
         for p in all_points:
             lh = (p.get("loai_hinh") or "").strip()
@@ -381,27 +386,31 @@ def run_route_generation(request: OptimizationRequest,
         - an_uong: tối đa 1 quán (<= 5h), tối đa 2 quán (> 5h)
         - tttm: tối đa 1 điểm
         """
-        cafe_cap = 2 if is_cafe_tour else (1 if (has_specific_prefs or hours <= 8.0) else 2)
+        cafe_cap = 2 if (is_cafe_tour or (has_cafe and (has_photo or "quiet" in preferred_tags or hours > 6.0))) else (1 if (has_specific_prefs or hours <= 8.0) else 2)
         food_cap = 1 if (has_specific_prefs or hours <= 6.0) else 2
         caps = {
             "cafe": cafe_cap,
             "an_uong": food_cap,
-            "tttm": 1,
+            "tttm": 1 if (has_ent or "shopping" in preferred_tags or not preferred_tags) else 0,
             "tham_quan": 2 if has_specific_prefs else 3,
             "checkin": 1 if has_specific_prefs else 2,
         }
-        # Thích ứng theo sở thích người dùng: không tự ý nhồi ẩm thực/di tích nếu không được yêu cầu
-        if preferred_tags:
+        # Thích ứng theo sở thích người dùng: chỉ giới hạn chặt loại hình khi người dùng yêu cầu HOẠT ĐỘNG CỤ THỂ
+        if has_specific_activity:
             if not has_food:
                 caps["an_uong"] = 0
-            if not has_culture and len(preferred_tags) <= 2:
-                caps["tham_quan"] = 0
-            if not has_photo and not has_culture and len(preferred_tags) <= 2:
+            if not has_ent and "shopping" not in preferred_tags:
+                caps["tttm"] = 0
+            if not has_culture:
+                caps["tham_quan"] = 1 if (has_photo or not has_specific_prefs) else 0
+            if not has_photo and not has_culture and has_specific_prefs:
                 caps["checkin"] = 0
+            elif has_photo:
+                caps["checkin"] = 2
             if not has_cafe:
                 caps["cafe"] = 0
             elif has_cafe:
-                caps["cafe"] = 2 if is_cafe_tour else 1
+                caps["cafe"] = 2 if (is_cafe_tour or has_photo or "quiet" in preferred_tags or hours > 6.0) else 1
             if has_ent:
                 caps["tttm"] = 1
             if has_ent and has_culture:
@@ -410,6 +419,18 @@ def run_route_generation(request: OptimizationRequest,
             if has_ent and has_cafe:
                 caps["tttm"] = 1
                 caps["cafe"] = 1
+        elif preferred_tags:
+            # Nếu người dùng chỉ nêu cảm xúc/phong cách (sôi động, yên tĩnh, lãng mạn...):
+            # Mở rộng các loại hình phù hợp với văn hóa, check-in, cafe ngắm phố
+            caps["tham_quan"] = 2
+            caps["checkin"] = 2
+            caps["cafe"] = 1
+            caps["an_uong"] = 1
+            caps["tttm"] = 0
+
+        # An toàn tuyệt đối: không bao giờ để tổng quota bằng 0
+        if sum(caps.values()) == 0:
+            caps = {"tham_quan": 2, "checkin": 2, "cafe": 1, "an_uong": 1, "tttm": 0}
         return caps
 
     def build_route_greedy_custom(origin, candidate_pool, k_weather, end_clock, score_fn,
@@ -443,6 +464,10 @@ def run_route_generation(request: OptimizationRequest,
                 max_total_stops = 2  # Đúng 1 quán cafe + 1 quán ăn!
             elif has_ent and has_culture:
                 max_total_stops = 3  # 1 rạp phim + 2 di tích
+            elif has_lively:
+                max_total_stops = 4 if trip_hours > 5.0 else 3
+            elif has_cafe and (has_photo or "quiet" in preferred_tags):
+                max_total_stops = 3 if trip_hours > 5.0 else 2
             elif len(preferred_tags) == 1:
                 max_total_stops = 1 if (has_cafe or has_ent) else 2
             else:
@@ -630,12 +655,18 @@ def run_route_generation(request: OptimizationRequest,
 
                 ("preference", base_unvisited,
                  lambda last, p, d: d * (1 - pref_weight) + _preference_penalty(p) * pref_weight, 1.0),
-
-                # Thong thả: quỹ thời gian ngắn hơn + ưu tiên điểm ở được lâu
-                # → ít điểm hơn, mỗi điểm lâu hơn, ít di chuyển hơn.
-                ("relax", pool_long,
-                 lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05, 0.7),
             ]
+
+            if has_lively:
+                strategies.insert(0, (
+                    "lively", base_unvisited,
+                    lambda last, p, d: d * 0.3 + _preference_penalty(p) * 1.5, 1.0
+                ))
+            else:
+                strategies.append((
+                    "relax", pool_long,
+                    lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05, 0.7
+                ))
 
             if has_food or not preferred_tags:
                 strategies.append((
@@ -687,13 +718,14 @@ def run_route_generation(request: OptimizationRequest,
                                               must_visit_ids=must_visit_ids),
                     k_weather, label, "time_optimized"
                 )
-                label = f"{ROUTE_THEMES['relax']['label']} · {_fmt_minutes(mins)}"
-                try_add(
-                    build_route_greedy_custom(origin, pool_long, k_weather, end_t,
-                                              lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05,
-                                              must_visit_ids=must_visit_ids),
-                    k_weather, label, "relax"
-                )
+                if not has_lively:
+                    label = f"{ROUTE_THEMES['relax']['label']} · {_fmt_minutes(mins)}"
+                    try_add(
+                        build_route_greedy_custom(origin, pool_long, k_weather, end_t,
+                                                  lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05,
+                                                  must_visit_ids=must_visit_ids),
+                        k_weather, label, "relax"
+                    )
 
             # ── LOẠI TRỪ ĐIỂM TOP → ép ra tập địa điểm lệch hẳn ──
             # Lưu ý: đây là biến thể TẠO SỰ ĐA DẠNG trong lúc sinh candidate,

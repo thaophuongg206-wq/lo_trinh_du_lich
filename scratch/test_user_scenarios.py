@@ -1,4 +1,5 @@
-import sys
+import sys, os
+sys.path.insert(0, os.path.abspath("."))
 from api.schemas import OptimizationRequest
 from api.generation import run_route_generation
 

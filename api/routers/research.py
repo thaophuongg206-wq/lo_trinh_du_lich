@@ -101,8 +101,38 @@ async def optimize_route_hybrid(request: OptimizationRequest):
         use_ollama=os.getenv("ABSA_OLLAMA_ENABLED","0").lower() in {"1","true","yes"}
         candidates=enrich_points(candidates, use_ollama=use_ollama)
         w=request.weight/100.0
+
+        # Map từ tag parser → các từ khoá liên quan đến loai_hinh/tên địa điểm
+        _TAG_LOAI_HINH_MAP = {
+            "cafe":          ["cafe", "cà phê", "coffee", "trà"],
+            "food":          ["ăn uống", "ẩm thực", "quán ăn", "nhà hàng", "bún", "phở", "bánh"],
+            "photo":         ["checkin", "check-in", "view", "góc đẹp", "chụp ảnh"],
+            "quiet":         ["cafe", "bảo tàng", "tham quan", "công viên", "hồ"],
+            "culture":       ["tham quan", "bảo tàng", "di tích", "văn miếu", "đền", "chùa"],
+            "nature":        ["công viên", "hồ", "vườn"],
+            "shopping":      ["tttm", "trung tâm thương mại", "mua sắm"],
+            "entertainment": ["giải trí", "rạp", "vui chơi"],
+        }
+        _preferred_tags = (parsed or {}).get("preferences", []) or []
+
         for p in candidates:
             p["experience_score"]=blend_experience(p.get("sabsa_score",0.5), p.get("score"), w)
+
+            # Boost điểm cho địa điểm khớp với gu của user (mỗi tag khớp +0.2, tối đa +0.4)
+            if _preferred_tags:
+                loai = _strip_diacritics(p.get("loai_hinh","")).lower()
+                ten  = _strip_diacritics(p.get("ten","")).lower()
+                mo_ta = _strip_diacritics(p.get("mo_ta","")).lower()
+                bonus = 0.0
+                for tag in _preferred_tags:
+                    keywords = _TAG_LOAI_HINH_MAP.get(tag, [])
+                    if any(_strip_diacritics(kw) in loai or _strip_diacritics(kw) in ten or _strip_diacritics(kw) in mo_ta
+                           for kw in keywords):
+                        bonus += 0.2
+                p["experience_score"] = min(1.0, p["experience_score"] + min(bonus, 0.4))
+                if bonus > 0:
+                    p["_preference_matched"] = True  # đánh dấu để frontend/log biết
+
             if parsed and any(_strip_diacritics(m) and _strip_diacritics(m) in _strip_diacritics(p["ten"]) for m in parsed.get("must_visit",[])):
                 p["_must"]=True
                 p["experience_score"]+=0.5   # soft must-visit: strongly preferred, still subject to time windows

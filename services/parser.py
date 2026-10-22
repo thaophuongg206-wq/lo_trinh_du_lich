@@ -410,28 +410,84 @@ def _extract_group(s: str) -> Tuple[Optional[int], Optional[str]]:
 # Mỗi phần tử: cụm từ CÓ DẤU. Mặc định so khớp cả bản có dấu lẫn bản bỏ dấu;
 # tiền tố "=" nghĩa là CHỈ so bản có dấu (tránh nhập nhằng: đền/đến, chùa/chưa,
 # phở/phố, sông/sống, hồ/họ, bé/be...).
+TAG_ICONS: Dict[str, str] = {
+    "cafe": "☕ Cà phê",
+    "photo": "📸 View đẹp / Sống ảo",
+    "quiet": "🍃 Yên tĩnh, thư giãn",
+    "lively": "🔥 Nhộn nhịp, sôi động",
+    "food": "🍜 Ẩm thực, món ngon",
+    "culture": "🏛️ Văn hóa - Lịch sử",
+    "nature": "🌳 Thiên nhiên ven hồ",
+    "entertainment": "🎬 Xem phim, giải trí",
+    "shopping": "🛍️ Mua sắm",
+    "nightlife": "🌙 Về đêm, dạo phố",
+    "romantic": "❤️ Hẹn hò lãng mạn",
+    "family": "👨‍👩‍👧 Gia đình",
+}
+
 _TAG_PHRASES: Dict[str, List[str]] = {
-    "cafe": ["cafe", "cà phê", "cafè", "coffee", "café", "trà sữa", "tiệm trà", "quán nước", "cf"],
+    "cafe": ["cafe", "cà phê", "cafè", "coffee", "café", "trà sữa", "tiệm trà", "quán nước", "cf", "trà chanh", "cà phê trứng", "cafe trứng", "thưởng trà", "quán trà", "uống trà"],
     "food": ["ăn uống", "ẩm thực", "đồ ăn", "quán ăn", "ăn trưa", "ăn sáng", "ăn tối", "ăn vặt", "=phở",
-             "bún chả", "bún", "bánh", "đặc sản", "nhà hàng", "món ngon", "ăn ngon", "food", "ăn"],
-    "photo": ["chụp ảnh", "chụp hình", "check in", "check-in", "checkin", "sống ảo", "view đẹp", "instagram",
-              "góc đẹp", "selfie", "photo", "quay phim", "chụp choẹt"],
+             "bún chả", "bún", "bánh", "đặc sản", "nhà hàng", "món ngon", "ăn ngon", "food", "ăn",
+             "bún đậu", "chả cá", "nem chua", "bánh mì", "nộm", "xôi", "ốc", "ăn đêm", "ăn nhẹ"],
+    "photo": ["chụp ảnh", "chụp hình", "check in", "check-in", "checkin", "sống ảo", "view đẹp", "view", "instagram",
+              "góc đẹp", "selfie", "photo", "quay phim", "chụp choẹt", "ngắm cảnh", "hoàng hôn", "bình minh", "view hồ", "rooftop"],
     "quiet": ["yên tĩnh", "vắng vẻ", "ít người", "thư giãn", "nhẹ nhàng", "chill", "bình yên", "tránh đông",
-              "không đông", "relax", "quiet", "thư thái", "tĩnh lặng"],
+              "không đông", "relax", "quiet", "thư thái", "tĩnh lặng", "yên ắng", "an yên", "đọc sách", "chữa lành", "làm việc"],
     "culture": ["văn hóa", "văn hoá", "lịch sử", "di tích", "bảo tàng", "=đền", "=chùa", "phố cổ", "kiến trúc",
-                "truyền thống", "cổ kính", "văn miếu", "lăng bác", "culture", "tâm linh"],
-    "shopping": ["mua sắm", "shopping", "trung tâm thương mại", "tttm", "mall", "siêu thị", "quần áo", "mua đồ"],
+                "truyền thống", "cổ kính", "văn miếu", "lăng bác", "culture", "tâm linh", "hỏa lò", "hoả lò", "nhà tù", "phố sách"],
+    "shopping": ["mua sắm", "shopping", "trung tâm thương mại", "tttm", "mall", "siêu thị", "quần áo", "mua đồ", "chợ", "chợ đêm", "quà lưu niệm"],
     "nature": ["thiên nhiên", "công viên", "hồ tây", "hồ gươm", "ven hồ", "=hồ", "cây xanh", "vườn", "=sông",
-               "nature", "park", "ngoài trời", "dạo bộ", "hóng gió"],
+               "nature", "park", "ngoài trời", "dạo bộ", "hóng gió", "dạo hồ", "tản bộ", "đi dạo"],
     "family": ["gia đình", "trẻ em", "trẻ con", "=bé", "con nhỏ", "bố mẹ", "ông bà", "family", "kids"],
-    "nightlife": ["về đêm", "buổi tối", "nightlife", "bar", "pub", "phố đi bộ", "chợ đêm", "đi đêm"],
-    "romantic": ["hẹn hò", "lãng mạn", "người yêu", "bạn gái", "bạn trai", "cặp đôi", "romantic"],
-    "lively": ["sôi động", "náo nhiệt", "vui nhộn", "nhộn nhịp", "đông vui", "vui chơi", "giải trí"],
+    "nightlife": ["về đêm", "buổi tối", "nightlife", "bar", "pub", "phố đi bộ", "chợ đêm", "đi đêm", "tạ hiện", "uống bia", "bia hơi", "nhạc sống"],
+    "romantic": ["hẹn hò", "lãng mạn", "người yêu", "bạn gái", "bạn trai", "cặp đôi", "romantic", "2 người", "riêng tư"],
+    "lively": ["sôi động", "náo nhiệt", "vui nhộn", "nhộn nhịp", "đông vui", "vui chơi", "giải trí", "tấp nập", "sầm uất", "náo nức", "quẩy"],
     "entertainment": ["xem phim", "chiếu phim", "rạp phim", "rạp chiếu phim", "rap phim", "rap chieu phim",
                       "chieu phim", "coi phim", "xem film", "xem movie", "cinema", "cgv", "lotte cinema",
                       "bhd", "bhd star", "giải trí", "vui chơi", "trượt băng", "bowling", "heroworld",
                       "khu vui chơi", "khu giải trí"],
 }
+
+_KNOWN_PLACES = [
+    ("Cafe Giảng", ["cafe giang", "ca phe giang", "giang cafe", "ca phe trung", "cafe trung"]),
+    ("Phở Thìn Bờ Hồ", ["pho thin", "pho thin bo ho"]),
+    ("Bún chả Hương Liên", ["bun cha huong lien", "bun cha obama", "huong lien"]),
+    ("Bánh tôm Hồ Tây", ["banh tom ho tay", "banh tom thanh nien", "banh tom"]),
+    ("Vua chả cá", ["vua cha ca"]),
+    ("Bún đậu Ngõ Trạm", ["bun dau ngo tram", "bun dau mam tom ngo tram"]),
+    ("Phở cuốn Hương Mai", ["pho cuon huong mai", "pho cuon ngu xa", "huong mai ngu xa"]),
+    ("Nộm Long Vi Dung", ["nom long vi dung", "nom hang bac", "long vi dung"]),
+    ("Bánh mì Trâm", ["banh mi tram", "banh mi dinh liet"]),
+    ("Miến lươn Chân Cầm", ["mien luon chan cam"]),
+    ("Xôi Yến", ["xoi yen", "xoi yen nguyen huu huan"]),
+    ("Ban Công Cafe", ["ban cong cafe", "cafe ban cong", "ban cong dinh liet"]),
+    ("Loading T Cafe", ["loading t cafe", "loading t", "cafe loading t"]),
+    ("Blackbird Coffee", ["blackbird coffee", "blackbird cafe", "blackbird chan cam"]),
+    ("Cotero Coffee", ["cotero coffee", "cotero"]),
+    ("La Mensa", ["la mensa", "la mensa tong dan"]),
+    ("All Day Coffee", ["all day coffee", "all day quang trung"]),
+    ("Yên Cafe", ["yen cafe", "cafe yen", "yen quan thanh"]),
+    ("Hasu Cafe", ["hasu cafe", "hasu"]),
+    ("Atelier Coffee", ["atelier coffee", "atelier"]),
+    ("Đền Ngọc Sơn", ["den ngoc son", "ngoc son"]),
+    ("Hồ Hoàn Kiếm", ["ho hoan kiem", "ho guom", "bo ho"]),
+    ("Lăng Bác", ["lang bac", "lang chu tich", "lang ho chi minh", "lang chu tich ho chi minh"]),
+    ("Văn Miếu", ["van mieu", "quoc tu giam", "van mieu quoc tu giam"]),
+    ("Chùa Trấn Quốc", ["chua tran quoc", "tran quoc"]),
+    ("Hồ Tây", ["ho tay", "duong thanh nien", "ven ho tay", "quanh ho tay"]),
+    ("Nhà thờ Lớn", ["nha tho lon", "nha tho lon ha noi"]),
+    ("Nhà tù Hỏa Lò", ["hoa lo", "nha tu hoa lo"]),
+    ("Phố đi bộ", ["pho di bo", "pho di bo ho guom"]),
+    ("Phố Tạ Hiện", ["ta hien", "pho ta hien", "bia ta hien"]),
+    ("Chợ Đồng Xuân", ["cho dong xuan", "dong xuan"]),
+    ("Tràng Tiền Plaza", ["trang tien plaza", "kem trang tien"]),
+    ("Vincom Bà Triệu", ["vincom ba trieu", "vincom"]),
+    ("Lotte Center", ["lotte center", "lotte lieu giai", "lotte cinema"]),
+    ("Royal City", ["royal city", "vincom royal city"]),
+    ("Aeon Mall", ["aeon mall", "aeon long bien"]),
+    ("Rạp Quốc Gia", ["rap quoc gia", "chieu phim quoc gia", "trung tam chieu phim quoc gia"]),
+]
 _PACE_SLOW = ["thong thả", "chậm", "nhẹ nhàng", "không vội", "thư thái", "ít điểm", "từ từ", "nghỉ nhiều", "không gấp"]
 _PACE_FAST = ["nhiều điểm", "càng nhiều càng tốt", "đi nhanh", "tranh thủ", "dày", "tối đa", "càng nhiều chỗ"]
 _BUDGET_LOW = ["rẻ", "bình dân", "tiết kiệm", "sinh viên", "giá mềm", "ít tiền", "hạt dẻ"]
@@ -760,6 +816,12 @@ def parse_prompt(prompt: str, context: Optional[Dict[str, Any]] = None,
     avoid_raw = _extract_list_after(original, _AVOID_CUES)
     avoid = [a for a in avoid_raw if not any(_strip(k) in _strip(a) for k in _AVOID_NOT_PLACE)]
 
+    # Tự động nhận diện địa danh / quán xá cụ thể có trong DB
+    for place_name, kws in _KNOWN_PLACES:
+        if any(re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", s) for kw in kws):
+            if place_name not in must_visit:
+                must_visit.append(place_name)
+
     content_kw = []
     for w in re.findall(r"[a-z]+", s):
         if len(w) > 1 and w not in _STRUCT_STOP and w not in _ALLOWED_GENERIC_STOP and w not in content_kw:
@@ -858,6 +920,7 @@ def parse_prompt(prompt: str, context: Optional[Dict[str, Any]] = None,
         "must_visit": must_visit[:10],
         "avoid": avoid[:10],
     }
+    fields["custom_phrases"] = _extract_custom_phrases(original, liked, must_visit)
 
     out = {
         "status": status,
@@ -867,7 +930,8 @@ def parse_prompt(prompt: str, context: Optional[Dict[str, Any]] = None,
         "clarification_questions": questions,
         "clarification_question": questions[0]["question"] if questions else None,
         "warnings": warnings,
-        "understood_summary": build_summary(fields, sources),
+        "badge_text": build_badge_text(fields, sources, original),
+        "understood_summary": build_summary(fields, sources, original),
         "confidence": confidence,
         # ---- khoá cũ (giữ tương thích /api/optimize-route-hybrid & test cũ) ----
         "time_limit_minutes": max(60, min(720, int(duration_minutes))) if (time_explicit and duration_minutes and duration_minutes > 0) else 360,
@@ -885,7 +949,95 @@ def parse_prompt(prompt: str, context: Optional[Dict[str, Any]] = None,
     return out
 
 
-def build_summary(fields: Dict[str, Any], sources: Dict[str, str]) -> str:
+def _extract_custom_phrases(original: str, liked: List[str], must_visit: List[str]) -> List[str]:
+    """Trích xuất các yêu cầu / cụm từ tự do người dùng ghi mà chưa được bao hàm trong tag hay địa danh cụ thể."""
+    if not original:
+        return []
+    clauses = re.split(r'[,;.!?\n]|\b(?:và|với|hoặc|cùng|nhưng|mà|để|kèm|thêm|rồi)\b', original, flags=re.I)
+    results = []
+    covered_words = set()
+    for t in liked:
+        for ph in _TAG_PHRASES.get(t, []):
+            covered_words.update(_strip(ph.lstrip('=')).split())
+    for mv in must_visit:
+        covered_words.update(_strip(mv).split())
+
+    for c in clauses:
+        clean = c.strip(' "\'“”()[]')
+        clean = re.sub(
+            r'^(?:thích|muốn|yêu cầu|cần|có|đi|trải nghiệm|khám phá|ghé|xem|uống|ăn|tìm|ngắm|thử|thong thả|nhẹ nhàng|chậm rãi|nhanh)\s+',
+            '', clean, flags=re.I
+        ).strip()
+        if len(clean) >= 3:
+            s_clean = _strip(clean)
+            words = [w for w in re.findall(r'[a-z0-9]+', s_clean) if w not in _STRUCT_STOP and w not in _ALLOWED_GENERIC_STOP]
+            uncovered = [w for w in words if w not in covered_words]
+            if uncovered:
+                results.append(clean[:50])
+    return results
+
+
+def build_badge_text(fields: Dict[str, Any], sources: Dict[str, str], raw_prompt: str = "") -> str:
+    """Tạo chuỗi badge ngắn gọn, trực quan cho thanh pill 'AI đã hiểu' trên màn hình 1."""
+    parts = []
+    # 1. Thời gian
+    if fields.get("start_time") and fields.get("end_time"):
+        parts.append(f"{fields['start_time']}–{fields['end_time']}")
+    # 2. Phương tiện
+    if fields.get("vehicle_type"):
+        v = VEHICLE_LABELS.get(fields["vehicle_type"], fields["vehicle_type"])
+        parts.append(v)
+    # 3. Điểm xuất phát
+    if fields.get("start_point"):
+        sp = "GPS" if fields["start_point"] == "GPS" else fields["start_point"]
+        parts.append(f"Từ: {sp}")
+
+    items = []
+    # 4. Tags sở thích (đầy đủ các category)
+    pref_tags = fields.get("preferred_tags") or []
+    for t in pref_tags:
+        if t in TAG_ICONS:
+            items.append(TAG_ICONS[t])
+
+    # 5. Địa điểm cụ thể (tự động nhận diện từ DB / quán xá)
+    for p in (fields.get("must_visit") or []):
+        items.append(f"📍 {p}")
+
+    # 6. Tránh
+    for a in (fields.get("avoid") or []):
+        items.append(f"🚫 Tránh {a}")
+
+    # 7. Nhịp độ / Ngân sách / Không gian
+    if fields.get("pace") == "thong_tha":
+        items.append("⏳ Thong thả")
+    elif fields.get("pace") == "nhanh":
+        items.append("⚡ Nhiều điểm")
+    if fields.get("budget") == 1:
+        items.append("💰 Tiết kiệm")
+    elif fields.get("budget") == 3:
+        items.append("✨ Sang trọng")
+    if fields.get("indoor_outdoor") == "trong_nha":
+        items.append("🏠 Trong nhà")
+    elif fields.get("indoor_outdoor") == "ngoai_troi":
+        items.append("⛅ Ngoài trời")
+
+    # 8. Yêu cầu tùy biến tự do của người dùng
+    custom = fields.get("custom_phrases")
+    if custom is None:
+        custom = _extract_custom_phrases(raw_prompt, pref_tags, fields.get("must_visit") or [])
+    for cp in custom[:2]:
+        items.append(f"✨ {cp}")
+
+    if items:
+        parts.append(" · ".join(items))
+    elif raw_prompt:
+        clean_p = raw_prompt[:50] + ("..." if len(raw_prompt) > 50 else "")
+        parts.append(f"✨ {clean_p}")
+
+    return " | ".join(parts)
+
+
+def build_summary(fields: Dict[str, Any], sources: Dict[str, str], raw_prompt: str = "") -> str:
     """Câu tóm tắt 'AI đã hiểu gì' — hiển thị cho người dùng kiểm tra lại."""
     from api.preferences import TAG_LABELS_VI
     parts = []
@@ -910,8 +1062,6 @@ def build_summary(fields: Dict[str, Any], sources: Dict[str, str]) -> str:
     tail = []
     if prefs:
         tail.append("thích " + ", ".join(prefs))
-    elif fields.get("preference_keywords"):
-        tail.append("quan tâm: " + ", ".join(fields["preference_keywords"][:5]))
     if fields.get("avoid_tags"):
         tail.append("không thích " + ", ".join(TAG_LABELS_VI.get(t, t) for t in fields["avoid_tags"]))
     if fields.get("pace") == "thong_tha":
@@ -928,4 +1078,13 @@ def build_summary(fields: Dict[str, Any], sources: Dict[str, str]) -> str:
         tail.append("muốn ghé " + ", ".join(fields["must_visit"]))
     if fields.get("avoid"):
         tail.append("tránh " + ", ".join(fields["avoid"]))
+
+    custom = fields.get("custom_phrases")
+    if custom is None:
+        custom = _extract_custom_phrases(raw_prompt, fields.get("preferred_tags") or [], fields.get("must_visit") or [])
+    if custom:
+        tail.append("quan tâm thêm: " + ", ".join(custom[:3]))
+    elif fields.get("preference_keywords") and not prefs:
+        tail.append("quan tâm: " + ", ".join(fields["preference_keywords"][:5]))
+
     return head + (" " + "; ".join(tail).capitalize() + "." if tail else "")

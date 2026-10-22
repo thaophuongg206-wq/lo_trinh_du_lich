@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 osrm_cache.sqlite
 absa_cache.json
+user_data.json

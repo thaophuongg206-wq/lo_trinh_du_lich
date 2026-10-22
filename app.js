@@ -602,8 +602,110 @@ $(document).ready(function () {
     }
 
     // ============================================================
-    // LIVE "AI ĐÃ HIỂU" PREVIEW TRÊN SCREEN 1
     // ============================================================
+    // LIVE "AI ĐÃ HIỂU" PREVIEW TRÊN SCREEN 1 (SEMANTIC PARSER INTEGRATION)
+    // ============================================================
+    const CLIENT_TAG_RULES = [
+        { id: 'lively', label: '🔥 Nhộn nhịp, sôi động', test: /(nhộn nhịp|sôi động|náo nhiệt|tấp nập|sầm uất|vui nhộn|đông vui|náo nức|quẩy)/i },
+        { id: 'quiet', label: '🍃 Yên tĩnh, thư giãn', test: /(yên tĩnh|vắng vẻ|ít người|thư giãn|nhẹ nhàng|chill|bình yên|tránh đông|không đông|thư thái|tĩnh lặng|an yên|chữa lành)/i },
+        { id: 'cafe', label: '☕ Cà phê', test: /(cafe|cà phê|cafè|coffee|café|trà sữa|tiệm trà|quán nước|cf|trà chanh|cà phê trứng|uống trà)/i },
+        { id: 'photo', label: '📸 View đẹp / Sống ảo', test: /(chụp ảnh|chụp hình|check in|check-in|checkin|sống ảo|view đẹp|view|instagram|góc đẹp|selfie|photo|hoàng hôn|bình minh|rooftop|ngắm cảnh)/i },
+        { id: 'food', label: '🍜 Ẩm thực', test: /(ăn uống|ẩm thực|đồ ăn|quán ăn|ăn trưa|ăn sáng|ăn tối|ăn vặt|phở|bún chả|bún|bánh|đặc sản|nhà hàng|món ngon|ăn ngon|bún đậu|chả cá|bánh mì|ăn đêm)/i },
+        { id: 'culture', label: '🏛️ Văn hóa - Lịch sử', test: /(văn hóa|văn hoá|lịch sử|di tích|bảo tàng|đền|chùa|phố cổ|kiến trúc|truyền thống|cổ kính|văn miếu|lăng bác|hỏa lò|tâm linh)/i },
+        { id: 'nature', label: '🌳 Thiên nhiên ven hồ', test: /(thiên nhiên|công viên|hồ tây|hồ gươm|ven hồ|cây xanh|vườn|ngoài trời|dạo bộ|hóng gió|tản bộ|đi dạo)/i },
+        { id: 'entertainment', label: '🎬 Xem phim / Rạp phim', test: /(xem phim|chiếu phim|rạp phim|rạp chiếu phim|rap phim|chieu phim|coi phim|xem film|cinema|cgv|lotte cinema|bhd|giải trí|vui chơi|trượt băng|bowling|khu vui chơi)/i },
+        { id: 'shopping', label: '🛍️ Mua sắm', test: /(mua sắm|shopping|trung tâm thương mại|tttm|mall|siêu thị|quần áo|mua đồ|chợ|chợ đêm)/i },
+        { id: 'nightlife', label: '🌙 Về đêm', test: /(về đêm|buổi tối|nightlife|bar|pub|phố đi bộ|chợ đêm|đi đêm|tạ hiện|uống bia|bia hơi)/i },
+        { id: 'romantic', label: '❤️ Lãng mạn', test: /(hẹn hò|lãng mạn|người yêu|bạn gái|bạn trai|cặp đôi)/i },
+        { id: 'family', label: '👨‍👩‍👧 Gia đình', test: /(gia đình|trẻ em|trẻ con|con nhỏ|bố mẹ|ông bà)/i },
+        { id: 'pace_slow', label: '⏳ Thong thả', test: /(thong thả|chậm rãi|từ từ|không vội|thư thái)/i },
+        { id: 'pace_fast', label: '⚡ Đi nhiều điểm', test: /(nhiều điểm|nhanh|tranh thủ|càng nhiều càng tốt)/i },
+        { id: 'budget_low', label: '💰 Tiết kiệm', test: /(tiết kiệm|bình dân|giá rẻ|hạt dẻ|sinh viên|ít tiền)/i },
+        { id: 'budget_high', label: '✨ Sang trọng', test: /(sang trọng|sang chảnh|cao cấp|luxury|đắt tiền)/i },
+        { id: 'indoor', label: '🏠 Trong nhà', test: /(trong nhà|điều hòa|điều hoà|máy lạnh|tránh nắng|trời mưa)/i },
+        { id: 'outdoor', label: '⛅ Ngoài trời', test: /(ngoài trời|thoáng mát|dã ngoại|hóng gió)/i },
+    ];
+
+    const CLIENT_KNOWN_PLACES = [
+        { name: 'Cafe Giảng', test: /(cafe gi[aả]ng|c[aà] ph[eê] gi[aả]ng|gi[aả]ng cafe|c[aà] ph[eê] tr[uứ]ng|cafe tr[uứ]ng)/i },
+        { name: 'Phở Thìn Bờ Hồ', test: /(ph[oở] th[iì]n)/i },
+        { name: 'Bún chả Hương Liên', test: /(b[uú]n ch[aả] h[uư][oơ]ng li[eê]n|b[uú]n ch[aả] obama|huong lien)/i },
+        { name: 'Hồ Gươm', test: /(h[oồ] g[uươ]m|h[oồ] ho[aà]n ki[eế]m|b[oờ] h[oồ])/i },
+        { name: 'Hồ Tây', test: /(h[oồ] t[aâ]y|ven h[oồ] t[aâ]y|quanh h[oồ] t[aâ]y)/i },
+        { name: 'Lăng Bác', test: /(l[aă]ng b[aá]c|l[aă]ng ch[uủ] t[iị]ch)/i },
+        { name: 'Văn Miếu', test: /(v[aă]n mi[eế]u|qu[oố]c t[uử] gi[aá]m)/i },
+        { name: 'Chùa Trấn Quốc', test: /(ch[uù]a tr[aấ]n qu[oố]c|tr[aấ]n qu[oố]c)/i },
+        { name: 'Nhà thờ Lớn', test: /(nh[aà] th[oờ] l[oớ]n)/i },
+        { name: 'Hỏa Lò', test: /(ho[aả] l[oò]|h[oỏ]a l[oò]|nh[aà] t[uù] ho[aả] l[oò])/i },
+        { name: 'Phố Tạ Hiện', test: /(t[aạ] hi[eệ]n|ph[oố] t[aạ] hi[eệ]n|bia t[aạ] hi[eệ]n)/i },
+        { name: 'Tràng Tiền', test: /(tr[aà]ng ti[eề]n|kem tr[aà]ng ti[eề]n)/i },
+        { name: 'Chợ Đồng Xuân', test: /(ch[oợ] [dđ][oồ]ng xu[aâ]n|[dđ][oồ]ng xu[aâ]n)/i },
+        { name: 'Ban Công Cafe', test: /(ban c[oô]ng cafe|cafe ban c[oô]ng)/i },
+        { name: 'Loading T Cafe', test: /(loading t)/i },
+        { name: 'Vincom Bà Triệu', test: /(vincom b[aà] tri[eệ]u|vincom)/i },
+        { name: 'Lotte Center', test: /(lotte)/i },
+        { name: 'Royal City', test: /(royal city)/i },
+    ];
+
+    let parsePromptTimer = null;
+    function fetchSemanticParse(pref) {
+        clearTimeout(parsePromptTimer);
+        if (!pref) {
+            $('#ai-clarification-box').addClass('d-none');
+            $('#ai-understood-detail').addClass('d-none');
+            return;
+        }
+        parsePromptTimer = setTimeout(() => {
+            $.ajax({
+                url: `${API_BASE}/api/parse-prompt`,
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    prompt: pref,
+                    context: {
+                        start_time: $('#start_time').val(),
+                        end_time: $('#end_time').val(),
+                        vehicle_type: $('#vehicle_type').val(),
+                        trip_date: $('#trip_date').val(),
+                        start_point: $('#start_point').val().trim()
+                    },
+                    use_llm: false
+                }),
+                success: function (res) {
+                    if (res && res.badge_text) {
+                        $('#ai-understood-text').text(res.badge_text);
+                    }
+                    if (res && res.understood_summary) {
+                        $('#ai-understood-detail-text').text(res.understood_summary);
+                        $('#ai-understood-detail').removeClass('d-none');
+                        $('#ai-understood-badge').attr('title', res.understood_summary);
+                    }
+                    if (res && res.status === 'need_clarification' && res.clarification_questions && res.clarification_questions.length > 0) {
+                        const q = res.clarification_questions[0];
+                        $('#ai-clarification-question').text(q.question);
+                        const $opts = $('#ai-clarification-options').empty();
+                        (q.options || []).forEach(opt => {
+                            const $chip = $('<button type="button" class="clarification-chip"></button>').text(opt.label);
+                            $chip.click(function () {
+                                const curVal = $('#user_preference').val().trim();
+                                $('#user_preference').val(curVal + ', ' + opt.value).trigger('input');
+                            });
+                            $opts.append($chip);
+                        });
+                        if (q.options && q.options.length > 0) {
+                            $('#ai-clarification-box').removeClass('d-none');
+                        }
+                    } else {
+                        $('#ai-clarification-box').addClass('d-none');
+                    }
+                },
+                error: function () {
+                    // Giữ kết quả client-side mượt mà nếu offline
+                }
+            });
+        }, 300);
+    }
+
     function updateLiveUnderstoodBar(customSummary) {
         const pref = $('#user_preference').val().trim();
         const sTime = firstDefined($('#start_time').val(), '08:00');
@@ -614,6 +716,8 @@ $(document).ready(function () {
 
         if (!pref && !customSummary) {
             $('#ai-understood-badge').addClass('d-none');
+            $('#ai-clarification-box').addClass('d-none');
+            $('#ai-understood-detail').addClass('d-none');
             return;
         }
 
@@ -623,16 +727,56 @@ $(document).ready(function () {
             return;
         }
 
+        // 1. Nhận diện sở thích, tag & địa điểm trực tiếp trên client (phản hồi tức thì)
+        const matchedItems = [];
+        CLIENT_TAG_RULES.forEach(r => {
+            if (r.test.test(pref)) {
+                matchedItems.push(r.label);
+            }
+        });
+        CLIENT_KNOWN_PLACES.forEach(p => {
+            if (p.test.test(pref)) {
+                matchedItems.push('📍 ' + p.name);
+            }
+        });
+
+        // 2. Trích xuất yêu cầu / mong muốn tự do của con người nếu có câu/mệnh đề riêng biệt
+        const clauses = pref.split(/[,;.!?\n]|\b(?:và|với|hoặc|cùng|nhưng|mà|để|kèm|thêm|rồi)\b/i);
+        clauses.forEach(c => {
+            let clean = c.trim().replace(/^["'“”()\[\]]+|["'“”()\[\]]+$/g, '');
+            clean = clean.replace(/^(?:thích|muốn|yêu cầu|cần|có|đi|trải nghiệm|khám phá|ghé|xem|uống|ăn|tìm|ngắm|thử|thong thả|nhẹ nhàng|chậm rãi|nhanh)\s+/i, '').trim();
+            if (clean.length >= 3) {
+                const isCovered = matchedItems.some(item => item.toLowerCase().includes(clean.toLowerCase()));
+                if (!isCovered && !matchedItems.includes('✨ ' + clean)) {
+                    if (!/^(hà nội|xe máy|ô tô|đi bộ|xe đạp|ngày|giờ|tiếng|hôm nay|ngày mai)$/i.test(clean)) {
+                        matchedItems.push('✨ ' + (clean.length > 35 ? clean.slice(0, 35) + '...' : clean));
+                    }
+                }
+            }
+        });
+
         const parts = [`${sTime}–${eTime}`, firstDefined(VEHICLE_NAMES[vType], vType)];
         if (sPoint) parts.push(`Từ: ${sPoint}`);
         if (ePoint) parts.push(`Đến: ${ePoint}`);
-        if (pref) {
-            const cleanPref = pref.length > 42 ? pref.slice(0, 42) + '...' : pref;
-            parts.push(cleanPref);
+
+        if (matchedItems.length > 0) {
+            parts.push(matchedItems.join(' · '));
+        } else if (pref) {
+            const cleanPref = pref.length > 60 ? pref.slice(0, 60) + '...' : pref;
+            parts.push('✨ ' + cleanPref);
         }
+
         $('#ai-understood-text').text(parts.join(' | '));
         $('#ai-understood-badge').removeClass('d-none');
+
+        // 3. Gọi Semantic Parser Backend đồng bộ ngữ nghĩa & gợi ý câu hỏi làm rõ
+        fetchSemanticParse(pref);
     }
+
+    $('#btn-edit-understood').click(function () {
+        $('#ai-understood-detail').toggleClass('d-none');
+        $('#user_preference').focus();
+    });
 
     $('#user_preference, #start_time, #end_time, #vehicle_type, #start_point, #end_point').on('input change', function () {
         updateLiveUnderstoodBar();
@@ -1020,10 +1164,12 @@ $(document).ready(function () {
                 : 60;
 
             let relaxLabel = `Vừa phải (TB ${avgVisit}p/điểm)`;
-            if (r.theme === 'relax' || avgVisit >= 85 || places.length <= 3) {
+            if (r.theme === 'lively') {
+                relaxLabel = `🔥 Sôi động & Năng động (TB ${avgVisit}p/điểm)`;
+            } else if (r.theme === 'relax' || avgVisit >= 85) {
                 relaxLabel = `Rất thong thả (TB ${avgVisit}p/điểm)`;
             } else if (r.theme === 'time_optimized' || avgVisit <= 50) {
-                relaxLabel = `Năng động · Tối ưu (${avgVisit}p/điểm)`;
+                relaxLabel = `Năng động · Tối ưu (TB ${avgVisit}p/điểm)`;
             }
 
             return {

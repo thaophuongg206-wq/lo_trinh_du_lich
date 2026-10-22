@@ -60,6 +60,12 @@ THEME_EXPERIENCE_NAMES = {
         "Góc nhìn đa chiều & Trải nghiệm phong phú",
         "Một ngày sống trọn chất Hà Thành",
     ],
+    "lively": [
+        "Hà Nội sôi động & Trải nghiệm náo nhiệt",
+        "Phố phường nhộn nhịp & Check-in rực rỡ",
+        "Hòa nhịp sôi động & Phố xá sầm uất",
+        "Một ngày năng động & Náo nức phố thị",
+    ],
 }
 
 CATEGORY_EXPERIENCE_NAMES = {
@@ -79,6 +85,7 @@ THEME_EXPERIENCE_DESCRIPTIONS = {
     "highlight": "Tuyển tập những địa danh tiêu biểu và được yêu thích nhất, hoàn hảo cho một ngày trải nghiệm tinh hoa thành phố.",
     "preference": "Lộ trình được tuyển chọn riêng bám sát mong muốn và tâm trạng của bạn, mang lại trải nghiệm chuẩn gu và đong đầy cảm xúc.",
     "diverse": "Hành trình đa sắc màu kết hợp hài hòa giữa tham quan, thưởng thức ẩm thực và thư giãn, đem lại trải nghiệm phong phú suốt cả ngày.",
+    "lively": "Hành trình tràn đầy năng lượng qua những tọa độ sôi động, sầm uất và điểm check-in rực rỡ nhất thủ đô.",
 }
 
 
@@ -130,6 +137,7 @@ def generate_route_name(route_points: list, route_index: int = 1, theme: str = "
 # điểm / thứ tự / tổng thời gian / mức độ di chuyển.
 # ============================================================
 ROUTE_THEMES = {
+    "lively":         {"label": "🔥 Sôi động & Náo nhiệt", "desc": "Tập trung các điểm vui chơi, phố xá tấp nập, đông vui và tràn đầy sức sống."},
     "time_optimized": {"label": "🏃 Tiết kiệm thời gian", "desc": "Đi gần, ít di chuyển, tận dụng tối đa thời gian tham quan."},
     "preference":     {"label": "🧭 Theo sở thích của bạn", "desc": "Bám sát mô tả mong muốn bạn đã nhập."},
     "relax":          {"label": "🌿 Thong thả", "desc": "Ít điểm hơn, mỗi điểm ở lâu hơn, không vội."},

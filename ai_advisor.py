@@ -175,12 +175,15 @@ def select_context_points(all_points: list, user_preference: str) -> list:
 
     try:
         from api.preferences import _extract_keywords, calculate_preference_score
+        from services.parser import _extract_tags, _normalize_typos, _low, _strip
+        norm_pref = _normalize_typos(user_preference or "")
+        liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
         keywords = _extract_keywords(user_preference)
 
         def relevance(p):
             base = (p.get("score") or 0) / 5.0
-            pref = calculate_preference_score(p, keywords)
-            if keywords and pref > 0.0:
+            pref = calculate_preference_score(p, keywords, preferred_tags=liked)
+            if (keywords or liked) and pref > 0.0:
                 return base * 0.2 + pref * 0.8
             return base * 0.5 + pref * 0.5
 
@@ -357,11 +360,22 @@ def build_prompt(context: str, user_preference: str, available_minutes: int, tri
     except Exception:
         liked = []
 
-    if liked and len(liked) <= 2:
+    has_lively = "lively" in liked or any(w in norm_pref for w in ("nao nhiet", "soi dong", "nhon nhip", "tap nap", "quay"))
+    has_quiet = "quiet" in liked or any(w in norm_pref for w in ("yen tinh", "chill", "thu gian"))
+
+    if has_lively:
+        target_count = 4 if available_minutes >= 240 else 3
+        rule = (
+            f"- Người dùng muốn trải nghiệm sôi động, náo nhiệt, giàu năng lượng ({user_preference}), "
+            f"HÃY CHỌN {target_count} địa điểm náo nhiệt, view đẹp, phố xá đông vui sầm uất. "
+            f"TUYỆT ĐỐI KHÔNG dùng các từ 'thong thả', 'bình yên', 'chậm rãi' trong advice_text và description!"
+        )
+    elif liked and len(liked) <= 2:
         target_count = min(3, max(2, len(liked)))
+        pacing = "thong thả" if has_quiet else "vừa vặn, thoải mái"
         rule = (
             f"- Người dùng chỉ có nhu cầu trải nghiệm cụ thể ({user_preference}), "
-            f"HÃY CHỌN ĐÚNG {target_count} địa điểm phù hợp nhất, nhịp độ thong thả. "
+            f"HÃY CHỌN ĐÚNG {target_count} địa điểm phù hợp nhất, nhịp độ {pacing}. "
             f"TUYỆT ĐỐI KHÔNG tự ý chọn thêm các địa điểm ngoài sở thích (như quán ăn, di tích)."
         )
     elif available_minutes < 180:
@@ -472,7 +486,7 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
         liked = []
 
     # Chọn số lượng điểm theo sở thích cụ thể hoặc quỹ thời gian
-    if liked and len(liked) <= 2:
+    if liked and len(liked) <= 3:
         target_count = min(3, max(2, len(liked)))
     elif available_minutes < 180:
         target_count = min(3, len(context_points))
@@ -485,7 +499,8 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
     from categories import category_of
     cat_map = {
         'cafe': 'cafe', 'entertainment': 'tttm', 'shopping': 'tttm',
-        'food': 'an_uong', 'culture': 'tham_quan', 'nature': 'tham_quan', 'photo': 'checkin'
+        'food': 'an_uong', 'culture': 'tham_quan', 'nature': 'tham_quan',
+        'photo': 'checkin', 'quiet': 'cafe'
     }
     liked_cats = {cat_map[t] for t in liked if t in cat_map}
 
@@ -498,11 +513,11 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
     chosen = []
     cat_counts = {}
     fallback_caps = {
-        "tttm": 1,
-        "cafe": 2 if ("cafe" in liked and len(liked) == 1) else 1,
-        "an_uong": 1,
-        "tham_quan": 2,
-        "checkin": 1,
+        "tttm": 1 if ('entertainment' in liked or 'shopping' in liked or not liked) else 0,
+        "cafe": 2 if ("cafe" in liked or "photo" in liked or "quiet" in liked) else 1,
+        "an_uong": 1 if ("food" in liked or not liked) else 0,
+        "tham_quan": 1 if ("photo" in liked and "culture" not in liked) else (2 if ("culture" in liked or not liked) else 0),
+        "checkin": 2 if ("photo" in liked) else 1,
     }
 
     # Ưu tiên lấy điểm phù hợp, không bao giờ lấy quá 1 rạp phim / TTTM
@@ -559,11 +574,35 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
             "places": places_data,
         })
 
-    advice_text = (
-        "Mình đã sắp xếp cho bạn một hành trình thật nhiều cảm xúc và hài hòa. "
-        "Từng điểm dừng chân đều được kết nối liền mạch, vừa đủ để bạn thong thả thưởng thức trọn vẹn cảnh sắc và hương vị nơi đây mà không lo vội vã."
-    )
-    summary = f"Gợi ý hành trình thảnh thơi thiết kế riêng cho quỹ thời gian {available_minutes} phút của bạn."
+    try:
+        from services.parser import _extract_tags, _normalize_typos, _low, _strip
+        norm_pref = _normalize_typos(user_preference or "")
+        liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
+    except Exception:
+        liked = []
+
+    has_lively = "lively" in liked or any(w in norm_pref for w in ("nao nhiet", "soi dong", "nhon nhip", "tap nap", "quay"))
+    has_quiet = "quiet" in liked or any(w in norm_pref for w in ("yen tinh", "chill", "thu gian"))
+
+    if has_lively:
+        advice_text = (
+            "Mình đã sắp xếp cho bạn một hành trình tràn đầy năng lượng và sôi động! "
+            "Từng điểm dừng chân đều được kết nối liền mạch, vừa có quán cà phê view đẹp để check-in sống ảo, "
+            "vừa đưa bạn hòa mình vào không khí phố phường náo nhiệt đặc trưng của thủ đô."
+        )
+        summary = f"Gợi ý hành trình sôi động, náo nhiệt thiết kế riêng cho quỹ thời gian {available_minutes} phút của bạn."
+    elif has_quiet:
+        advice_text = (
+            "Mình đã sắp xếp cho bạn một hành trình nhẹ nhàng và bình yên. "
+            "Từng điểm dừng chân đều được kết nối liền mạch, vừa đủ để bạn thong thả thưởng thức trọn vẹn cảnh sắc nơi đây mà không lo vội vã."
+        )
+        summary = f"Gợi ý hành trình thảnh thơi thiết kế riêng cho quỹ thời gian {available_minutes} phút của bạn."
+    else:
+        advice_text = (
+            "Mình đã sắp xếp cho bạn một hành trình thật nhiều cảm xúc và hài hòa. "
+            "Từng điểm dừng chân đều được kết nối liền mạch, giúp bạn tận hưởng trọn vẹn nét đẹp và phong vị thủ đô."
+        )
+        summary = f"Gợi ý hành trình thiết kế riêng cho quỹ thời gian {available_minutes} phút của bạn."
 
     return advice_text, suggested_ids, [], summary, timeline
 
