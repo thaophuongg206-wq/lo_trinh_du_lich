@@ -42,11 +42,21 @@ def get_global_osrm_matrix(points_list, vehicle_type: str = "xe_may", static_tra
                 }
         return matrix_dict
     except Exception:
+        from services.osrm import haversine_km, estimate_duration_min
         for p1 in points_list:
             matrix_dict[p1["id"]] = {}
+            lat1 = p1.get("lat") or p1.get("vi_do") or 0.0
+            lon1 = p1.get("lon") or p1.get("kinh_do") or 0.0
             for p2 in points_list:
-                matrix_dict[p1["id"]][p2["id"]] = {
-                    "duration": (15 if p1["id"] != p2["id"] else 0) * K_TRAFFIC,
-                    "distance": 5.0 if p1["id"] != p2["id"] else 0
-                }
+                if p1["id"] == p2["id"]:
+                    matrix_dict[p1["id"]][p2["id"]] = {"duration": 0.0, "distance": 0.0}
+                else:
+                    lat2 = p2.get("lat") or p2.get("vi_do") or 0.0
+                    lon2 = p2.get("lon") or p2.get("kinh_do") or 0.0
+                    dist = haversine_km(lat1, lon1, lat2, lon2) if (lat1 and lon1 and lat2 and lon2) else 2.5
+                    dur = estimate_duration_min(dist, vehicle_type) * K_TRAFFIC
+                    matrix_dict[p1["id"]][p2["id"]] = {
+                        "duration": round(dur, 2),
+                        "distance": round(dist, 2)
+                    }
         return matrix_dict

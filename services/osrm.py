@@ -182,22 +182,39 @@ class OSRMService:
             if new:
                 self.cache.put_many(new)
 
-        matrix: Dict[str, Dict[str, Dict[str, float]]] = {}
+        matrix: Dict[Any, Dict[Any, Dict[str, float]]] = {}
         for i, p1 in enumerate(points):
-            matrix[p1["id"]] = {}
+            p1_key = p1["id"]
+            p1_str = str(p1_key)
+            row = {}
             for j, p2 in enumerate(points):
+                p2_key = p2["id"]
+                p2_str = str(p2_key)
                 if i == j or ck[i] == ck[j]:
-                    matrix[p1["id"]][p2["id"]] = {"duration": 0.0, "distance": 0.0, "source": "osrm"}
+                    entry = {"duration": 0.0, "distance": 0.0, "source": "osrm"}
                 elif (i, j) in raw:
                     d, m = raw[(i, j)]
-                    matrix[p1["id"]][p2["id"]] = {"duration": round(d / 60.0 * k_traffic, 3),
-                                                  "distance": round(m / 1000.0, 4), "source": "osrm",
-                                                  "cached": (i, j) in cached_pairs}
+                    dist_km = round(m / 1000.0, 4)
+                    if vehicle_type == "di_bo":
+                        # Đi bộ thực tế: tốc độ trung bình 4.5 km/h
+                        dur_min = (dist_km / 4.5) * 60.0 * k_traffic
+                    elif vehicle_type == "xe_dap":
+                        # Xe đạp thực tế: tốc độ trung bình 12 km/h
+                        dur_min = (dist_km / 12.0) * 60.0 * k_traffic
+                    else:
+                        dur_min = (d / 60.0) * k_traffic
+                    entry = {"duration": round(dur_min, 3),
+                             "distance": dist_km, "source": "osrm",
+                             "cached": (i, j) in cached_pairs}
                 else:
                     km = haversine_km(p1["lat"], p1["lon"], p2["lat"], p2["lon"]) * 1.3
                     self.stats["fallback_pairs"] += 1
-                    matrix[p1["id"]][p2["id"]] = {"duration": round(estimate_duration_min(km, vehicle_type) * k_traffic, 3),
-                                                  "distance": round(km, 4), "source": "haversine_fallback"}
+                    entry = {"duration": round(estimate_duration_min(km, vehicle_type) * k_traffic, 3),
+                             "distance": round(km, 4), "source": "haversine_fallback"}
+                row[p2_key] = entry
+                row[p2_str] = entry
+            matrix[p1_key] = row
+            matrix[p1_str] = row
         return matrix
 
     def _fallback_matrix(

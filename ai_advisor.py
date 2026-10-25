@@ -89,7 +89,7 @@ class AIRefineRequest(BaseModel):
     start_time: str = "08:00"
     end_time: str = "17:00"
     user_preference: str = ""
-    current_ids: List[str]
+    current_ids: Optional[List[str]] = None
     instruction: str
     model: Optional[str] = None
     session_id: Optional[str] = None   # Để ghi excluded_ids vào state backend (mục 6)
@@ -359,25 +359,36 @@ def build_prompt(context: str, user_preference: str, available_minutes: int, tri
         liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
     except Exception:
         liked = []
+        norm_pref = ""
 
-    has_lively = "lively" in liked or any(w in norm_pref for w in ("nao nhiet", "soi dong", "nhon nhip", "tap nap", "quay"))
+    has_lively = ("lively" in liked) or any(w in norm_pref for w in ("nao nhiet", "soi dong", "soi noi", "nhon nhip", "tap nap", "quay", "vui choi"))
+
     has_quiet = "quiet" in liked or any(w in norm_pref for w in ("yen tinh", "chill", "thu gian"))
 
     if has_lively:
-        target_count = 4 if available_minutes >= 240 else 3
+        target_count = 5 if available_minutes >= 360 else (4 if available_minutes >= 240 else 3)
         rule = (
             f"- Người dùng muốn trải nghiệm sôi động, náo nhiệt, giàu năng lượng ({user_preference}), "
-            f"HÃY CHỌN {target_count} địa điểm náo nhiệt, view đẹp, phố xá đông vui sầm uất. "
-            f"TUYỆT ĐỐI KHÔNG dùng các từ 'thong thả', 'bình yên', 'chậm rãi' trong advice_text và description!"
+            f"HÃY CHỌN {target_count} địa điểm náo nhiệt, view đẹp, TTTM, rạp chiếu phim, quán ăn ngon hoặc check-in sầm uất. "
+            f"TUYỆT ĐỐI KHÔNG chọn các địa điểm tâm linh tĩnh lặng (như chùa, đền, lăng tẩm) trừ khi người dùng yêu cầu rõ! "
+            f"TUYỆT ĐỐI KHÔNG dùng các từ 'thong thả', 'bình yên', 'chậm rãi', 'thanh tịnh' trong advice_text và description!"
         )
     elif liked and len(liked) <= 2:
-        target_count = min(3, max(2, len(liked)))
-        pacing = "thong thả" if has_quiet else "vừa vặn, thoải mái"
-        rule = (
-            f"- Người dùng chỉ có nhu cầu trải nghiệm cụ thể ({user_preference}), "
-            f"HÃY CHỌN ĐÚNG {target_count} địa điểm phù hợp nhất, nhịp độ {pacing}. "
-            f"TUYỆT ĐỐI KHÔNG tự ý chọn thêm các địa điểm ngoài sở thích (như quán ăn, di tích)."
-        )
+        is_narrow_activity = any(t in liked for t in ("cafe", "entertainment", "shopping", "food"))
+        if is_narrow_activity or available_minutes <= 240:
+            target_count = min(3, max(2, len(liked)))
+            pacing = "thong thả" if has_quiet else "vừa vặn, thoải mái"
+            rule = (
+                f"- Người dùng chỉ có nhu cầu trải nghiệm cụ thể ({user_preference}), "
+                f"HÃY CHỌN ĐÚNG {target_count} địa điểm phù hợp nhất, nhịp độ {pacing}. "
+                f"TUYỆT ĐỐI KHÔNG tự ý chọn thêm các địa điểm ngoài sở thích (như quán ăn, di tích)."
+            )
+        elif available_minutes <= 360:
+            target_count = 3 if has_quiet else 4
+            rule = f"- Quỹ thời gian {available_minutes} phút với phong cách thư giãn, HÃY CHỌN {target_count} địa điểm không gian thoáng đãng, yên bình, nhịp độ thong thả."
+        else:
+            target_count = 4 if has_quiet else 5
+            rule = f"- Quỹ thời gian cả ngày ({available_minutes} phút) với phong cách thư giãn ({user_preference}), HÃY CHỌN {target_count} đến 5 địa điểm thanh tịnh, bình yên, rải đều các mốc sáng - trưa - chiều - tối, nhịp độ thong thả không vội vã." 
     elif available_minutes < 180:
         rule = "- Do thời gian ngắn (dưới 3 tiếng), HÃY CHỌN 2 đến 3 địa điểm."
     elif 180 <= available_minutes <= 360:
@@ -484,23 +495,28 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
         liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
     except Exception:
         liked = []
+        norm_pref = ""
+
+    has_lively = ("lively" in liked) or any(w in norm_pref for w in ("nao nhiet", "soi dong", "soi noi", "nhon nhip", "tap nap", "quay", "vui choi"))
 
     # Chọn số lượng điểm theo sở thích cụ thể hoặc quỹ thời gian
-    if liked and len(liked) <= 3:
+    is_narrow_activity = any(t in liked for t in ("cafe", "entertainment", "shopping", "food"))
+    if is_narrow_activity and len(liked) <= 2 and available_minutes <= 240:
         target_count = min(3, max(2, len(liked)))
     elif available_minutes < 180:
         target_count = min(3, len(context_points))
     elif available_minutes <= 360:
-        target_count = min(5, len(context_points))
+        target_count = min(3 if ("quiet" in liked) else 4, len(context_points))
     else:
-        target_count = min(7, len(context_points))
+        # Trên 6 tiếng (360 phút) đến 12 tiếng (720 phút)
+        target_count = min(4 if ("quiet" in liked) else 5, len(context_points))
     target_count = max(2, min(target_count, len(context_points)))
 
     from categories import category_of
     cat_map = {
         'cafe': 'cafe', 'entertainment': 'tttm', 'shopping': 'tttm',
         'food': 'an_uong', 'culture': 'tham_quan', 'nature': 'tham_quan',
-        'photo': 'checkin', 'quiet': 'cafe'
+        'photo': 'checkin', 'quiet': 'cafe', 'lively': 'tttm'
     }
     liked_cats = {cat_map[t] for t in liked if t in cat_map}
 
@@ -512,13 +528,35 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
 
     chosen = []
     cat_counts = {}
-    fallback_caps = {
-        "tttm": 1 if ('entertainment' in liked or 'shopping' in liked or not liked) else 0,
-        "cafe": 2 if ("cafe" in liked or "photo" in liked or "quiet" in liked) else 1,
-        "an_uong": 1 if ("food" in liked or not liked) else 0,
-        "tham_quan": 1 if ("photo" in liked and "culture" not in liked) else (2 if ("culture" in liked or not liked) else 0),
-        "checkin": 2 if ("photo" in liked) else 1,
-    }
+    # Nhận diện người dùng có yêu cầu hoạt động cụ thể hay chỉ nêu phong cách
+    has_specific_act = any(t in liked for t in ("cafe", "entertainment", "shopping", "food", "culture", "nature", "photo"))
+    
+    if has_lively and not ("culture" in liked):
+        # Phong cách sôi nổi: TTTM, rạp phim, check-in, ẩm thực; TUYỆT ĐỐI KHÔNG CHÙA/ĐỀN
+        fallback_caps = {
+            "cafe": 1,
+            "an_uong": 2 if available_minutes > 360 else 1,
+            "tham_quan": 0,
+            "checkin": 2,
+            "tttm": 1,
+        }
+    elif not has_specific_act:
+        # Nếu người dùng chỉ nêu phong cách/cảm xúc (thư giãn, yên tĩnh...):
+        fallback_caps = {
+            "cafe": 2 if (available_minutes > 360 or "quiet" in liked) else 1,
+            "an_uong": 1,
+            "tham_quan": 2 if "quiet" in liked or not liked else 1,
+            "checkin": 1,
+            "tttm": 1 if (not liked and available_minutes > 480) else 0,
+        }
+    else:
+        fallback_caps = {
+            "tttm": 1 if ('entertainment' in liked or 'shopping' in liked) else 0,
+            "cafe": 2 if ("cafe" in liked or "photo" in liked or "quiet" in liked) else (1 if not liked else 0),
+            "an_uong": 1 if ("food" in liked) else (1 if available_minutes > 360 else 0),
+            "tham_quan": 2 if ("culture" in liked or "nature" in liked) else (1 if not liked else 0),
+            "checkin": 2 if ("photo" in liked) else (1 if not liked else 0),
+        }
 
     # Ưu tiên lấy điểm phù hợp, không bao giờ lấy quá 1 rạp phim / TTTM
     for p in prioritized_points:
@@ -580,8 +618,10 @@ def generate_fallback_suggestion(context_points: list, available_minutes: int, u
         liked, _ = _extract_tags(_low(norm_pref), _strip(norm_pref))
     except Exception:
         liked = []
+        norm_pref = ""
 
-    has_lively = "lively" in liked or any(w in norm_pref for w in ("nao nhiet", "soi dong", "nhon nhip", "tap nap", "quay"))
+    has_lively = ("lively" in liked) or any(w in norm_pref for w in ("nao nhiet", "soi dong", "soi noi", "nhon nhip", "tap nap", "quay", "vui choi"))
+
     has_quiet = "quiet" in liked or any(w in norm_pref for w in ("yen tinh", "chill", "thu gian"))
 
     if has_lively:
@@ -859,11 +899,17 @@ def analyze_complex_refine_request(
     # 2. KIỂM TRA LỆNH XÓA / BỎ ĐIỂM TRỰC TIẾP
     has_remove = _has_remove_intent(raw_text)
     has_find_or_replace = any(w in norm_text for w in (
-        "thay the", "thay bang", "thay sang", "thay quan", "thay diem", "thay cho",
-        "doi sang", "doi thanh", "doi quan", "doi diem", "doi cho",
-        "tim cho", "tim quan", "tim diem", "tim them", "goi y", "chuyen sang", "cho nao", "quan nao"
+        "thay the", "thay bang", "thay sang", "thay quan", "thay diem", "thay cho", "thay noi",
+        "doi sang", "doi thanh", "doi quan", "doi diem", "doi cho", "doi noi",
+        "tim cho", "tim quan", "tim diem", "tim them", "goi y", "chuyen sang", "cho nao", "quan nao",
+        "chuyen giup", "doi giup", "thay giup", "chuyen ho", "doi ho", "thay ho", "doi cho toi", "thay cho toi"
+    )) or bool(re.search(r"\b(doi|thay|chuyen)\b.*?\b(sang|thanh|bang|cho|quan|diem|noi)\b", norm_text))
+
+    has_positive_criteria = any(k in norm_text for k in (
+        "mua", "troi mua", "trong nha", "mai che", "yen tinh", "chill", "view dep", "chup anh",
+        "an uong", "an trua", "an toi", "cafe", "ca phe", "bao tang", "di tich", "gia re"
     ))
-    if has_remove and not has_find_or_replace:
+    if has_remove and not has_find_or_replace and not has_positive_criteria:
         return "direct", None, [], "", []
 
     # 3. NHẬN DIỆN CÁC TIÊU CHÍ PHỨC TẠP
@@ -1246,6 +1292,8 @@ def refine_route(req: AIRefineRequest):
     from itinerary_store import store
 
     session = store.get(req.session_id)
+    if req.session_id and session is None:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
     excluded = set(session.excluded_ids) if session else set()
 
     # Lưu tin nhắn của user vào chat_history trong session
@@ -1259,8 +1307,20 @@ def refine_route(req: AIRefineRequest):
     if excluded:
         all_points = [p for p in all_points if str(p["id"]) not in excluded]
 
+    current_ids = req.current_ids
+    if current_ids is None:
+        current_ids = []
+        if session and session.current_itinerary:
+            route = session.current_itinerary.get("optimized_route") or session.current_itinerary.get("places") or []
+            current_ids = [str(p.get("id")) for p in route if p.get("id") is not None and str(p.get("id")) != "gps_current"]
+        elif session and session.routes:
+            sel_route = session.routes.get(session.selected_route_id) or (list(session.routes.values())[0] if session.routes else None)
+            if sel_route:
+                route = sel_route.get("optimized_route") or sel_route.get("places") or []
+                current_ids = [str(p.get("id")) for p in route if p.get("id") is not None and str(p.get("id")) != "gps_current"]
+
     id_to_point = {str(p["id"]): p for p in all_points}
-    current_points = [id_to_point[str(i)] for i in req.current_ids if str(i) in id_to_point]
+    current_points = [id_to_point[str(i)] for i in current_ids if str(i) in id_to_point]
 
     # Phân tích yêu cầu AI Refine phức tạp (options, yên tĩnh, trời mưa, multi-turn selection...)
     intent, target_pt, options, advice_text, suggested_ids = analyze_complex_refine_request(
@@ -1329,7 +1389,7 @@ def refine_route(req: AIRefineRequest):
             trip_context=trip_context, user_preference=req.user_preference,
         )
         raw_response = call_ai_service(prompt, model=req.model or OLLAMA_MODEL)
-        advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set, req.current_ids)
+        advice_text, suggested_ids, invalid_ids = parse_refine_response(raw_response, valid_ids_set, current_ids)
     except Exception:
         # Fallback thông minh và an toàn khi service AI LLM lỗi hoặc offline
         advice_text, suggested_ids, invalid_ids = generate_fallback_refine(
@@ -1342,7 +1402,7 @@ def refine_route(req: AIRefineRequest):
     # Ghi ý định bỏ điểm vào state backend
     removed_ids = []
     if session is not None:
-        dropped = [i for i in req.current_ids if i not in suggested_ids and i not in excluded]
+        dropped = [i for i in current_ids if i not in suggested_ids and i not in excluded]
         if dropped and _has_remove_intent(req.instruction):
             removed_ids = session.exclude(dropped)
         session.pin(suggested_ids)

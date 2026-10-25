@@ -97,6 +97,8 @@ async def create_routes(request: OptimizationRequest):
         return result
 
     session.set_routes(result["routes"])
+    if result["routes"]:
+        session.select_route(result["routes"][0]["route_id"])
     result["session_id"] = session.session_id
     return result
 
@@ -288,7 +290,7 @@ async def delete_chat_history(session_id: str):
 
 
 class UserProfileUpdateRequest(BaseModel):
-    user_id: Optional[str] = "traveler_hn"
+    user_id: Optional[str] = None
     name: Optional[str] = None
     email: Optional[str] = None
     default_preference: Optional[str] = None
@@ -296,7 +298,7 @@ class UserProfileUpdateRequest(BaseModel):
 
 
 class UserFavoriteToggleRequest(BaseModel):
-    user_id: Optional[str] = "traveler_hn"
+    user_id: Optional[str] = None
     place_id: str
 
 
@@ -306,25 +308,34 @@ class UserLoginRequest(BaseModel):
 
 
 @router.get("/api/user/profile")
-async def get_user_profile(user_id: Optional[str] = "traveler_hn"):
+async def get_user_profile(user_id: Optional[str] = None):
     """Lấy thông tin tài khoản và số lượng địa điểm yêu thích."""
+    uid = (user_id or "").strip()
+    if not uid or uid.lower() in ("guest", "null", "undefined", "anonymous"):
+        return {"status": "unauthenticated", "data": None}
     from api.user_store import user_store
-    return {"status": "success", "data": user_store.get_user(user_id or "traveler_hn")}
+    return {"status": "success", "data": user_store.get_user(uid)}
 
 
 @router.post("/api/user/profile")
 async def update_user_profile(req: UserProfileUpdateRequest):
     """Cập nhật thông tin tài khoản và gu du lịch mặc định."""
+    uid = (req.user_id or "").strip()
+    if not uid or uid.lower() in ("guest", "null", "undefined", "anonymous"):
+        raise HTTPException(status_code=401, detail="Vui lòng đăng nhập để cập nhật hồ sơ.")
     from api.user_store import user_store
-    updated = user_store.update_profile(req.user_id or "traveler_hn", req.model_dump(exclude_unset=True))
+    updated = user_store.update_profile(uid, req.model_dump(exclude_unset=True))
     return {"status": "success", "data": updated}
 
 
 @router.get("/api/user/favorites")
-async def get_user_favorites(user_id: Optional[str] = "traveler_hn"):
+async def get_user_favorites(user_id: Optional[str] = None):
     """Lấy danh sách chi tiết các địa điểm đã lưu yêu thích của người dùng."""
+    uid = (user_id or "").strip()
+    if not uid or uid.lower() in ("guest", "null", "undefined", "anonymous"):
+        return {"status": "unauthenticated", "user_id": None, "favorites_count": 0, "data": []}
     from api.user_store import user_store
-    fav_ids = set(user_store.get_favorites(user_id or "traveler_hn"))
+    fav_ids = set(user_store.get_favorites(uid))
     all_pts = fetch_all_points()
     fav_places = []
     for p in all_pts:
@@ -345,17 +356,23 @@ async def get_user_favorites(user_id: Optional[str] = "traveler_hn"):
                 "gio_mo_cua": open_t.strftime("%H:%M") if hasattr(open_t, "strftime") else str(open_t or "00:00")[:5],
                 "gio_dong_cua": close_t.strftime("%H:%M") if hasattr(close_t, "strftime") else str(close_t or "23:59")[:5],
             })
-    return {"status": "success", "user_id": user_id, "favorites_count": len(fav_places), "data": fav_places}
+    return {"status": "success", "user_id": uid, "favorites_count": len(fav_places), "data": fav_places}
 
 
 @router.post("/api/user/favorites/toggle")
 async def toggle_user_favorite(req: UserFavoriteToggleRequest):
-    """Thêm hoặc gỡ một địa điểm khỏi danh sách yêu thích."""
+    """Thêm hoặc gỡ một địa điểm khỏi danh sách yêu thích. Bắt buộc đăng nhập."""
+    uid = (req.user_id or "").strip()
+    if not uid or uid.lower() in ("guest", "null", "undefined", "anonymous"):
+        raise HTTPException(
+            status_code=401,
+            detail="Vui lòng đăng nhập để lưu địa điểm yêu thích vào tài khoản của bạn."
+        )
     from api.user_store import user_store
-    is_fav, fav_ids = user_store.toggle_favorite(req.user_id or "traveler_hn", req.place_id)
+    is_fav, fav_ids = user_store.toggle_favorite(uid, req.place_id)
     return {
         "status": "success",
-        "user_id": req.user_id or "traveler_hn",
+        "user_id": uid,
         "place_id": str(req.place_id),
         "is_favorite": is_fav,
         "favorites": fav_ids,
@@ -368,8 +385,16 @@ async def user_login(req: UserLoginRequest):
     """Đăng nhập hoặc chuyển tài khoản người dùng đơn giản."""
     from api.user_store import user_store
     user_id = req.email.strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập email hoặc tên đăng nhập.")
     profile = user_store.get_user(user_id)
     return {"status": "success", "message": "Đăng nhập thành công", "data": profile}
+
+
+@router.post("/api/user/logout")
+async def user_logout():
+    """Đăng xuất người dùng."""
+    return {"status": "success", "message": "Đã đăng xuất thành công."}
 
 
 @router.post("/api/admin/import-excel")

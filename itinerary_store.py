@@ -257,6 +257,9 @@ class SessionStore:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is not None:
+                if time.time() - session.updated_at > SESSION_TTL_SECONDS:
+                    self._sessions.pop(session_id, None)
+                    return None
                 session.touch()
             return session
 
@@ -278,6 +281,15 @@ class SessionStore:
         with self._lock:
             return len(self._sessions)
 
+    def sweep_expired(self) -> int:
+        """Chủ động quét và dọn dẹp các phiên đã hết hạn (TTL). Trả về số phiên đã xoá."""
+        with self._lock:
+            before = len(self._sessions)
+            self._evict_expired_locked()
+            return before - len(self._sessions)
+
 
 # Instance dùng chung toàn app.
 store = SessionStore()
+
+SessionStore.sweep = SessionStore.sweep_expired
