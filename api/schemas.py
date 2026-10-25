@@ -45,3 +45,14 @@ class OptimizationRequest(BaseModel):
         if not (0 <= v <= 100):
             raise ValueError("weight phải nằm trong khoảng 0-100")
         return v
+
+    @field_validator("vehicle_type")
+    @classmethod
+    def validate_vehicle_type(cls, v):
+        if not v:
+            return "xe_may"
+        allowed = {"xe_may", "o_to", "di_bo", "xe_buyt", "xe_dap"}
+        v_clean = str(v).lower().strip()
+        if v_clean not in allowed:
+            raise ValueError(f"Phương tiện '{v}' không hợp lệ. Chỉ chấp nhận: {', '.join(sorted(allowed))}")
+        return v_clean

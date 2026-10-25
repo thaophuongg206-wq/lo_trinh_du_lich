@@ -1,6 +1,8 @@
 """Legacy cost function, 2-opt, Or-opt and exact TSPTW DP used by the classic generator.
 
 Time arithmetic is delegated to core.timeline (walk/step) — no private copy of the simulator here."""
+from datetime import timedelta
+from categories import category_of
 from config import CFG
 from core import audit
 from core.timeline import approx_km, step, walk, window_dt
@@ -163,6 +165,18 @@ def solve_tsptw_exact(points, matrix_dict, k_weather, vehicle_type, clock_start_
                 if mask & (1 << nxt):
                     continue
                 p_next = cands[nxt]
+
+                # Ràng buộc bữa ăn: Không xếp 2 quán ăn liền kề nếu khoảng cách thời gian < 90 phút
+                if category_of(p_last) == "an_uong" and category_of(p_next) == "an_uong":
+                    if any(category_of(c) != "an_uong" for c in cands):
+                        d_temp = calc_dist(p_last, p_next)
+                        tr_temp = get_travel_minutes(p_last["id"], p_next["id"], d_temp, matrix_dict, k_weather, vehicle_type, cur_time)
+                        w_open = window_dt(p_next, base_date)[0]
+                        arr_temp = cur_time + timedelta(minutes=tr_temp)
+                        gap_mins = (max(arr_temp, w_open) - cur_time).total_seconds() / 60.0
+                        if gap_mins < 90.0:
+                            continue
+
                 dist = calc_dist(p_last, p_next)
                 travel = get_travel_minutes(p_last["id"], p_next["id"], dist, matrix_dict, k_weather, vehicle_type, cur_time)
                 _, _, finish, _, late = step(cur_time, travel, window_dt(p_next, base_date), p_next.get("time") or 0)

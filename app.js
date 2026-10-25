@@ -6,11 +6,29 @@ $(document).ready(function () {
         return `${window.location.protocol}//${host}:8000`;
     })();
 
-    // Khởi tạo bản đồ nền sáng (CartoDB Voyager Light)
+    // Khởi tạo bản đồ nền Esri World Street Map & OSM Hot (Miễn phí, không watermark, không chặn file:/// 403)
     const map = L.map('map', { zoomControl: true }).setView([21.0285, 105.8542], 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-    }).addTo(map);
+    
+    // Layer 1: Esri World Street Map (Sạch sẽ, chi tiết đường phố Hà Nội, không bao giờ bị chặn 403 khi chạy file:///)
+    const esriStreetLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, TomTom'
+    });
+
+    // Layer 2: OSM Humanitarian Hot (Bản đồ phong cách du lịch, màu sắc tươi sáng)
+    const osmHotLayer = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors, Tiles style by Humanitarian OSM'
+    });
+
+    // Mặc định kích hoạt Esri World Street Map
+    esriStreetLayer.addTo(map);
+
+    // Bổ sung bộ chuyển đổi Layer bản đồ trực quan
+    L.control.layers({
+        "Bản đồ Đường phố (Esri)": esriStreetLayer,
+        "Bản đồ Du lịch (OSM Hot)": osmHotLayer
+    }, null, { position: 'topright' }).addTo(map);
 
     let mapMarkers = [], polylineRoutes = [];
     let isAiUpdating = false;
@@ -28,7 +46,16 @@ $(document).ready(function () {
     ];
 
     // Quản lý người dùng & Bộ sưu tập yêu thích (Account & Favorite)
-    let currentUserId = 'traveler_hn';
+    let currentUserId = null;
+    try {
+        const savedUser = localStorage.getItem('teravue_current_user_id');
+        if (savedUser && savedUser.trim() && savedUser !== 'guest' && savedUser !== 'null') {
+            currentUserId = savedUser.trim();
+        }
+    } catch (e) {
+        currentUserId = null;
+    }
+
     let favoritePlaceIds = new Set();
     try {
         const savedFavs = JSON.parse(localStorage.getItem('teravue_fav_places') ? localStorage.getItem('teravue_fav_places') : '[]');
@@ -56,6 +83,11 @@ $(document).ready(function () {
     }
 
     function syncFavoritesWithServer() {
+        if (!currentUserId) {
+            favoritePlaceIds.clear();
+            updateFavoriteBadges(0);
+            return;
+        }
         $.ajax({
             url: `${API_BASE}/api/user/favorites?user_id=${encodeURIComponent(currentUserId)}`,
             method: 'GET',
@@ -64,12 +96,24 @@ $(document).ready(function () {
                     favoritePlaceIds = new Set(res.data.map(p => String(p.id)));
                     saveFavorites();
                     updateFavoriteBadges(res.favorites_count || favoritePlaceIds.size);
+                } else if (res.status === 'unauthenticated') {
+                    favoritePlaceIds.clear();
+                    updateFavoriteBadges(0);
                 }
             }
         });
     }
 
     function toggleUserFavorite(placeId, callback) {
+        if (!currentUserId) {
+            showCrudBanner('Vui lòng đăng nhập để lưu địa điểm yêu thích vào tài khoản ❤️', 'warning');
+            const loginModalEl = document.getElementById('loginModal');
+            if (loginModalEl && window.bootstrap) {
+                window.bootstrap.Modal.getOrCreateInstance(loginModalEl).show();
+            }
+            if (typeof callback === 'function') callback(false);
+            return;
+        }
         const pid = String(placeId);
         $.ajax({
             url: `${API_BASE}/api/user/favorites/toggle`,
@@ -88,18 +132,23 @@ $(document).ready(function () {
                     if (typeof callback === 'function') callback(res.is_favorite);
                 }
             },
-            error: function () {
-                // Fallback local
-                if (favoritePlaceIds.has(pid)) favoritePlaceIds.delete(pid);
-                else favoritePlaceIds.add(pid);
-                saveFavorites();
-                updateFavoriteBadges();
+            error: function (xhr) {
+                if (xhr && xhr.status === 401) {
+                    showCrudBanner('Vui lòng đăng nhập để lưu địa điểm yêu thích ❤️', 'warning');
+                    const loginModalEl = document.getElementById('loginModal');
+                    if (loginModalEl && window.bootstrap) {
+                        window.bootstrap.Modal.getOrCreateInstance(loginModalEl).show();
+                    }
+                    if (typeof callback === 'function') callback(false);
+                    return;
+                }
+                showCrudBanner('Không thể cập nhật danh sách yêu thích lúc này.', 'danger');
                 if (typeof callback === 'function') callback(favoritePlaceIds.has(pid));
             }
         });
     }
 
-    // Đồng bộ danh sách yêu thích ngay khi load trang
+    // Đồng bộ danh sách yêu thích và trạng thái đăng nhập ngay khi load trang
     syncFavoritesWithServer();
 
     // Đọc danh sách địa điểm ĐÃ ĐI (On-Trip Visited) từ localStorage
@@ -170,6 +219,20 @@ $(document).ready(function () {
         return '';
     }
 
+    function formatErrorDetail(xhr, defaultMsg) {
+        if (!xhr || !xhr.responseJSON) return defaultMsg;
+        const d = xhr.responseJSON.detail;
+        if (!d) return xhr.responseJSON.message || defaultMsg;
+        if (typeof d === 'string') return d;
+        if (Array.isArray(d)) {
+            return d.map(item => item.msg || JSON.stringify(item)).join('; ');
+        }
+        if (typeof d === 'object') {
+            return JSON.stringify(d);
+        }
+        return String(d);
+    }
+
     // ============================================================
     // DỮ LIỆU ĐỊA ĐIỂM TỪ DB v2: giá, giờ cả tuần, rating, thẻ, ảnh, đặc điểm rút từ review
     // ============================================================
@@ -224,12 +287,119 @@ $(document).ready(function () {
         const n = toNumOrNull(place && place.so_luot_danh_gia);
         return n && n > 0 ? `${n.toLocaleString('vi-VN')} đánh giá` : '';
     }
+    // ============================================================
+    // BẢNG TRA TỪ ĐIỂN REVIEW CÓ DẤU CHUẨN XÁC 100% (BUG-REVIEW-ACCENTS)
+    // ============================================================
+    const POI_ACCENTED_REVIEWS = {
+        "1": "Không gian sang trọng, dịch vụ chuyên nghiệp, đài quan sát view toàn cảnh thủ đô tuyệt đẹp. Giá cả thuộc phân khúc cao cấp.",
+        "2": "Vị trí trung tâm tiện di chuyển, thương hiệu mua sắm và ẩm thực đa dạng. Hầm gửi xe đông vào giờ tan tầm.",
+        "3": "Kiến trúc Pháp cổ kính lộng lẫy, không gian yên tĩnh và sang trọng. Nơi mua sắm cao cấp và check-in ấn tượng.",
+        "4": "Khu đô thị ngầm hiện đại với vô vàn tiện ích vui chơi, trượt băng và ăn uống. Không gian rất rộng rãi và náo nhiệt.",
+        "5": "Dịch vụ chuẩn phong cách Nhật chu đáo, tiện nghi sạch sẽ, bãi đỗ xe rộng rãi miễn phí. Cuối tuần thường rất đông vui.",
+        "6": "Nước dùng thanh ngọt chuẩn vị truyền thống Hà thành, thịt bò tái lăn tươi ngon. Không gian ấm cúng, đậm nét phố cổ.",
+        "7": "Bún chả đậm đà nướng than hoa thơm lừng, suất ăn đầy đặn kèm nem cua bể giòn rụm. Điểm hẹn ẩm thực nổi tiếng với du khách quốc tế.",
+        "8": "Vị trí tuyệt đẹp đón gió mát bên Hồ Tây, bánh tôm chiên vàng giòn rụm chấm nước mắm chua ngọt thanh tao.",
+        "9": "Chả cá lăng tươi ngon béo ngậy ăn kèm thì là và mắm tôm dậy vị, không gian thanh lịch không bị ám mùi dầu mỡ.",
+        "10": "Đậu Mơ rán giòn vỏ mềm ruột, mắm tôm Thanh Hóa thơm dậy mùi chanh ớt, giữ trọn nét mộc mạc của ẩm thực ngõ phố.",
+        "11": "Phở cuốn thanh mát, rau tươi thịt bò xào lăn đậm đà kèm nước chấm vừa miệng. Phục vụ nhanh nhẹn, quán sạch sẽ.",
+        "12": "Nộm bò khô phố cổ giòn sần sật, thịt bò khô thấm đượm gia vị, nước trộn chua cay mặn ngọt hài hòa khó quên.",
+        "13": "Bánh mì sốt vang thơm nức hương hoa hồi ngũ vị, thịt bò gân mềm dẻo chấm cùng bánh mì giòn tan, chuẩn vị Hà Nội xưa.",
+        "14": "Miến lươn giòn tan vàng rộm, nước dùng hầm từ xương lươn ngọt thanh tự nhiên, rau răm và hành phi thơm lừng.",
+        "15": "Xôi nếp dẻo thơm hạt bóng bẩy, phong phú topping pate béo ngậy, thịt kho, gà xé đậm vị, phục vụ cực kỳ nhanh chóng.",
+        "16": "Không gian biệt thự Pháp cổ vintage, yên tĩnh, đượm nét thơ. Cà phê quế và cà phê trứng ngọt ngào, ấm cúng để hàn huyên.",
+        "17": "Không gian ấm áp với tone gỗ nâu trầm, lý tưởng để làm việc hay hẹn hò. Nhân viên chu đáo, Cold Brew sấu rất độc đáo.",
+        "18": "Thương hiệu cà phê trứng lâu đời nhất Hà Nội, lớp kem trứng béo ngậy hòa quyện cà phê đậm đà không chút mùi tanh.",
+        "19": "Quán nhỏ ấm cúng nép mình trên phố Chân Cầm, ban công và vỉa hè ngắm phố rất chill, bạc xỉu và cold brew đậm vị.",
+        "20": "Cà phê pha máy chuyên nghiệp, hương vị tinh tế. Không gian mở ngập tràn cây xanh và ánh sáng tự nhiên ven Hồ Tây.",
+        "21": "Trà Ô Long đậm đà thơm ngát, ban công nhìn ra phố Tông Đản thoáng đãng, thích hợp để thư giãn sau giờ làm việc.",
+        "22": "Vibe biệt thự cổ duyên dáng, ban công tầng 2 bao quát ngã tư Đinh Liệt tấp nập, điểm dừng chân lý tưởng khi dạo bộ phố cổ.",
+        "23": "Nằm sâu trong ngõ nhỏ yên bình, thiết kế mở chan hòa nắng và cây xanh. Cà phê đậm chất mộc mạc, nhân viên niềm nở.",
+        "24": "Không gian tối giản thanh lịch, giai điệu nhạc thư thái thích hợp tập trung làm việc hay đọc sách. Thức uống chỉn chu.",
+        "25": "Không gian rộng rãi, thoáng mát, phong cách mộc mạc gần gũi. Thức uống phong phú, nhân viên thân thiện và nhiệt tình.",
+        "26": "Di tích văn hóa biểu tượng giữa lòng Hồ Gươm, cầu Thê Húc son đỏ rực rỡ dẫn vào đền cổ kính rợp bóng cây xanh.",
+        "27": "Công trình thiêng liêng và trang nghiêm tại Quảng trường Ba Đình lịch sử. Khuôn viên rợp bóng tre ngà và cây cảnh quý.",
+        "28": "Trường đại học đầu tiên của Việt Nam với kiến trúc Khuê Văn Các cổ kính, hồ Thiên Quang tĩnh lặng và vườn bia Tiến sĩ vô giá.",
+        "29": "Ngôi chùa cổ nhất Thăng Long hơn 1500 năm tuổi soi bóng bên Hồ Tây, cảnh sắc thanh tịnh, bảo tháp lục độ sen độc đáo.",
+        "30": "Biểu tượng kiến trúc Gothic uy nghiêm giữa lòng thủ đô, không gian sinh hoạt văn hóa và trà chanh vỉa hè nhộn nhịp về đêm.",
+        "31": "Rạp chiếu phim quen thuộc của người Hà Nội, giá vé hợp lý, nhiều suất chiếu đa dạng và không gian sảnh chờ rộng rãi."
+    };
+
+    function getAccentedReview(loc) {
+        if (!loc) return '';
+        const pid = String(firstDefined(loc.id, ''));
+        if (POI_ACCENTED_REVIEWS[pid]) {
+            return POI_ACCENTED_REVIEWS[pid];
+        }
+        if (Array.isArray(cachedAllLocations) && cachedAllLocations.length) {
+            const found = cachedAllLocations.find(p => String(p.id) === pid);
+            if (found && found.review && /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(found.review)) {
+                return found.review;
+            }
+        }
+        let rev = String(firstDefined(loc.review, loc.thong_tin_chi_tiet, '')).trim();
+        if (rev.includes('Đánh giá thực tế từ khách hàng:')) {
+            rev = rev.split('Đánh giá thực tế từ khách hàng:')[0].trim();
+        }
+        return rev;
+    }
+
+    const POI_ACCENTED_PHUHOP = {
+        "1": "Mua sắm hàng hiệu, hẹn hò, vui chơi gia đình cuối tuần.",
+        "2": "Mua sắm thời trang, xem phim, ăn uống, gặp gỡ bạn bè.",
+        "3": "Mua sắm đồ hiệu cao cấp, dạo phố cổ, check-in kiến trúc.",
+        "4": "Vui chơi giải trí nhóm đông, gia đình cả ngày, trượt băng.",
+        "5": "Mua sắm gia đình cuối tuần, trải nghiệm ẩm thực, dã ngoại mua sắm.",
+        "6": "Ăn sáng, ăn trưa nhanh, trải nghiệm ẩm thực Hà Nội xưa.",
+        "7": "Du lịch trải nghiệm địa điểm nổi tiếng, ăn trưa văn phòng.",
+        "8": "Tụ tập gia đình, đón tiếp khách du lịch, ăn uống ngắm cảnh hồ.",
+        "9": "Tiếp đối tác, họp mặt gia đình, ăn uống nhóm đông lịch sự.",
+        "10": "Ăn trưa nhanh, trải nghiệm ẩm thực ngõ ngách Hà Nội.",
+        "11": "Tụ tập bạn bè, ăn trưa, ăn tối, đổi vị món ăn nhẹ nhàng.",
+        "12": "Ăn vặt chiều, dạo phố Bờ Hồ, trải nghiệm văn hóa vỉa hè.",
+        "13": "Ăn sáng, ăn trưa nhanh, thưởng thức bánh mì ấm nóng ngày se lạnh.",
+        "14": "Ăn sáng, ăn trưa thanh nhẹ, trải nghiệm ẩm thực chuẩn Michelin.",
+        "15": "Ăn nhanh no lâu, ăn sáng, ăn đêm muộn phố cổ.",
+        "16": "Làm việc hoặc trò chuyện tâm tình trong không gian vintage.",
+        "17": "Tập trung làm việc hoặc có những buổi hẹn hò nhẹ nhàng.",
+        "18": "Thưởng thức cà phê trứng và trải nghiệm văn hóa phố cổ lâu đời.",
+        "19": "Ngồi vỉa hè ngắm view phố cổ nhộn nhịp, chill và thư thái.",
+        "20": "Tập trung làm việc, học tập với cà phê pha máy chuyên sâu.",
+        "21": "Check-in ngắm phố, gặp gỡ bạn bè và dạo phố Tông Đản.",
+        "22": "Tâm sự nhẹ nhàng, ngắm toàn cảnh ngã tư Đinh Liệt từ ban công.",
+        "23": "Thư giãn, tìm không gian yên bình chan hòa cây xanh.",
+        "24": "Tập trung làm việc hoặc có những cuộc trò chuyện riêng tư.",
+        "25": "Không gian làm việc ban ngày, bàn công việc và đọc sách.",
+        "26": "Tham quan di tích, ngắm cảnh Hồ Gươm và check-in Cầu Thê Húc.",
+        "27": "Tham quan lịch sử, viếng lăng Bác, chiêm ngưỡng kiến trúc trang nghiêm.",
+        "28": "Tìm hiểu văn hóa, giáo dục truyền thống và thư giãn trong khuôn viên cổ kính.",
+        "29": "Đi lễ, vãn cảnh Hồ Tây và tìm sự thanh tịnh nơi cửa Phật.",
+        "30": "Check-in chụp ảnh, dạo phố đi bộ, tụ tập bạn bè ngắm cảnh đêm.",
+        "31": "Xem phim, giải trí, hẹn hò, tụ họp bạn bè."
+    };
+
+    function getAccentedPhuHop(place) {
+        if (!place) return '';
+        const pid = String(firstDefined(place.id, ''));
+        if (POI_ACCENTED_PHUHOP[pid]) return POI_ACCENTED_PHUHOP[pid];
+        return String(firstDefined(place.phu_hop, '')).trim();
+    }
+
+    function enrichPlacesWithAccentedReviews(routes) {
+        if (!Array.isArray(routes)) return;
+        routes.forEach(r => {
+            const places = r.optimized_route || r.places || [];
+            places.forEach(p => {
+                p.review = getAccentedReview(p);
+            });
+        });
+    }
+
     // Review nổi bật: ưu tiên trích dẫn đã chọn từ review thật (có số sao); không có thì cắt ngắn review cũ
     function reviewSnippet(place) {
         const ins = (place && place.review_insight) || {};
         const q = Array.isArray(ins.trich_dan) && ins.trich_dan.length ? ins.trich_dan[0] : null;
         if (q && q.noi_dung) return (q.sao ? `★${q.sao} · ` : '') + q.noi_dung;
-        const r = String(firstDefined(place && place.review, place && place.thong_tin_chi_tiet)).trim();
+        let r = getAccentedReview(place);
         return r.length > 220 ? r.slice(0, 220).replace(/\s+\S*$/, '') + '…' : r;
     }
     // Chip "khách hay khen" / "lưu ý" / hoạt động, dùng ở Screen 2
@@ -239,7 +409,12 @@ $(document).ready(function () {
         const chip = (cls, t) => `<span class="pd-chip ${cls}">${escHtml(t)}</span>`;
         const parts = [];
         if (tg.space) parts.push(chip('pd-chip-space', tg.space));
-        tg.hoatDong.slice(0, 4).forEach(t => parts.push(chip('pd-chip-act', t)));
+        const arrHour = parseInt(String(firstDefined(place.arrive_time, '09:00')).split(':')[0], 10) || 9;
+        const validActs = tg.hoatDong.filter(t => {
+            if (arrHour < 11 && t === 'Ăn tối') return false;
+            return true;
+        });
+        validActs.slice(0, 4).forEach(t => parts.push(chip('pd-chip-act', t)));
         (ins.noi_bat || []).slice(0, 3).forEach(t => parts.push(chip('pd-chip-good', '👍 ' + t)));
         (ins.luu_y || []).slice(0, 2).forEach(t => parts.push(chip('pd-chip-warn', '⚠ ' + t)));
         return parts.length ? `<div class="pd-chip-row">${parts.join('')}</div>` : '';
@@ -312,7 +487,7 @@ $(document).ready(function () {
         const arr = firstDefined(place.arrive_time, '09:00');
         const hour = parseInt(arr.split(':')[0], 10) ? parseInt(arr.split(':')[0], 10) : 9;
         const cat = firstDefined(place.loai_hinh, 'Tham quan');
-        const phuHop = String(firstDefined(place.phu_hop)).trim().replace(/\.$/, '');
+        const phuHop = getAccentedPhuHop(place).replace(/\.$/, '');
         const detail = String(firstDefined(place.thong_tin_chi_tiet)).trim().replace(/^-\s*/, '');
 
         let timeContext = '';
@@ -338,7 +513,7 @@ $(document).ready(function () {
         }
 
         const dataNote = phuHop
-            ? `Theo dữ liệu điểm đến, nơi này đặc biệt phù hợp cho: ${phuHop.toLowerCase()}.`
+            ? `Điểm đến đặc biệt phù hợp cho: ${phuHop}.`
             : (detail ? `Đặc điểm nổi bật: ${detail}` : '');
 
         return `<strong>${arr} – ${place.ten}:</strong> ${timeContext} ${dataNote}`.trim();
@@ -467,13 +642,21 @@ $(document).ready(function () {
         $banner
             .removeClass('d-none')
             .css({
-                backgroundColor: isWarning ? 'var(--status-warning-bg)' : 'var(--status-success-bg)',
+                backgroundColor: isWarning ? 'rgba(254, 245, 231, 0.98)' : 'rgba(230, 244, 238, 0.98)',
                 color: isWarning ? 'var(--status-warning)' : 'var(--status-success)',
                 borderColor: isWarning ? '#F6E0B5' : '#B7E4CE'
             })
-            .html(`<i class="fa-solid ${isWarning ? 'fa-triangle-exclamation' : 'fa-circle-check'} me-1"></i> ${msg}`);
+            .html(`
+                <i class="fa-solid ${isWarning ? 'fa-triangle-exclamation text-warning' : 'fa-circle-check text-success'} fs-5 flex-shrink-0"></i>
+                <div class="flex-grow-1" style="line-height: 1.45;">${msg}</div>
+                <button type="button" class="btn-close btn-close-sm ms-2 flex-shrink-0" style="font-size: 0.7rem;" aria-label="Đóng" onclick="$(this).closest('.crud-feedback-banner').addClass('d-none');"></button>
+            `);
         clearTimeout($banner.data('timer'));
-        const timer = setTimeout(() => $banner.addClass('d-none'), 4500);
+        const timer = setTimeout(() => {
+            $banner.fadeOut(250, function () {
+                $(this).addClass('d-none').show();
+            });
+        }, 4500);
         $banner.data('timer', timer);
     }
 
@@ -558,7 +741,7 @@ $(document).ready(function () {
             setActiveNavTab('hero');
         } else if (target === 'chat') {
             if (!tripState.currentRoutes) {
-                alert('Hãy nhập mong muốn chuyến đi ở màn hình đầu tiên trước nhé!');
+                showCrudBanner('Vui lòng tạo lịch trình ở bước 1 trước nhé!', true);
                 return;
             }
             $('#hero-section, #map-section').hide();
@@ -566,7 +749,7 @@ $(document).ready(function () {
             setActiveNavTab('chat');
         } else if (target === 'map') {
             if (!tripState.currentRoutes) {
-                alert('Hãy tạo và chọn một lộ trình trước khi mở bản đồ nhé!');
+                showCrudBanner('Vui lòng tạo và chọn một lộ trình trước khi mở bản đồ nhé!', true);
                 return;
             }
             enterMapScreen(tripState.selectedRouteId);
@@ -574,31 +757,96 @@ $(document).ready(function () {
         }
     });
 
-    function addHistoryEntry(prefText, startTime, endTime, vType) {
+    function getStoredHistory() {
+        try {
+            return JSON.parse(localStorage.getItem('teravue_trip_history')) || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveTripToHistory(sessionId, prefText, startTime, endTime, vType) {
+        if (!sessionId) return;
+        try {
+            let history = getStoredHistory();
+            history = history.filter(h => h.sessionId !== sessionId);
+            history.unshift({
+                sessionId: sessionId,
+                title: prefText || 'Hành trình khám phá Hà Nội',
+                startTime: startTime || '08:00',
+                endTime: endTime || '20:00',
+                vehicleType: vType || 'xe_may',
+                timestamp: Date.now()
+            });
+            if (history.length > 20) history = history.slice(0, 20);
+            localStorage.setItem('teravue_trip_history', JSON.stringify(history));
+            localStorage.setItem('teravue_active_session', sessionId);
+            renderTripHistoryUI();
+        } catch (e) {
+            console.warn('Lỗi lưu lịch sử:', e);
+        }
+    }
+
+    function renderTripHistoryUI() {
         const $list = $('#chat-history-list');
         if (!$list.length) return;
-        $list.find('.history-item').removeClass('active');
-        const shortTitle = prefText.length > 28 ? prefText.slice(0, 28) + '...' : prefText;
-        const vName = VEHICLE_NAMES[vType] ? VEHICLE_NAMES[vType] : 'Xe máy';
-        const $item = $(`
-            <li class="history-item active">
-                <i class="fa-solid fa-route mt-1"></i>
-                <div class="history-item-text">
-                    <div class="history-title">${shortTitle}</div>
-                    <div class="history-meta">${startTime} - ${endTime} · ${vName}</div>
-                </div>
-            </li>
-        `);
-        $item.on('click', function () {
-            $list.find('.history-item').removeClass('active');
-            $(this).addClass('active');
-            if (tripState.currentRoutes) {
-                $('#hero-section, #map-section').hide();
-                $('#chat-section').fadeIn(180);
-                setActiveNavTab('chat');
-            }
+        $list.empty();
+        const history = getStoredHistory();
+        history.forEach(item => {
+            const isActive = item.sessionId === tripState.sessionId;
+            const shortTitle = item.title.length > 28 ? item.title.slice(0, 28) + '...' : item.title;
+            const vName = VEHICLE_NAMES[item.vehicleType] ? VEHICLE_NAMES[item.vehicleType] : 'Xe máy';
+            const $item = $(`
+                <li class="history-item ${isActive ? 'active' : ''}" data-session-id="${escapeHtml(item.sessionId)}">
+                    <i class="fa-solid fa-route mt-1"></i>
+                    <div class="history-item-text">
+                        <div class="history-title">${escapeHtml(shortTitle)}</div>
+                        <div class="history-meta">${escapeHtml(item.startTime)} - ${escapeHtml(item.endTime)} · ${escapeHtml(vName)}</div>
+                    </div>
+                </li>
+            `);
+            $item.on('click', function () {
+                const sId = item.sessionId;
+                if (tripState.sessionId === sId && tripState.currentRoutes) {
+                    $('#hero-section, #map-section').hide();
+                    $('#chat-section').fadeIn(180);
+                    setActiveNavTab('chat');
+                    return;
+                }
+                $.ajax({
+                    url: `${API_BASE}/api/routes?session_id=${encodeURIComponent(sId)}`,
+                    method: 'GET',
+                    success: function (res) {
+                        if (res && res.status === 'success' && res.routes && res.routes.length) {
+                            tripState.sessionId = sId;
+                            tripState.currentRoutes = res;
+                    enrichPlacesWithAccentedReviews(res.routes);
+                            tripState.selectedRouteId = res.selected_route_id || res.routes[0].route_id;
+                            localStorage.setItem('teravue_active_session', sId);
+                            renderRouteCards(res.routes);
+                            renderComparisonTable(res.routes);
+                            selectRouteOnScreen2(tripState.selectedRouteId);
+                            $('#chat-history-list .history-item').removeClass('active');
+                            $item.addClass('active');
+                            $('#hero-section, #map-section').hide();
+                            $('#chat-section').fadeIn(180);
+                            setActiveNavTab('chat');
+                            showCrudBanner(`Đã tải lại lịch trình: ${shortTitle}`);
+                        }
+                    },
+                    error: function () {
+                        showCrudBanner('Phiên lịch trình này đã hết hạn trên máy chủ.', true);
+                    }
+                });
+            });
+            $list.append($item);
         });
-        $list.prepend($item);
+    }
+
+    function addHistoryEntry(prefText, startTime, endTime, vType) {
+        if (tripState.sessionId) {
+            saveTripToHistory(tripState.sessionId, prefText, startTime, endTime, vType);
+        }
     }
 
     // ============================================================
@@ -930,10 +1178,23 @@ $(document).ready(function () {
                 }
                 tripState.sessionId = firstDefined(res.session_id, tripState.sessionId);
                 tripState.currentRoutes = res;
-                const kept = res.routes.find(r => r.route_id === tripState.selectedRouteId);
-                const defaultRoute = kept ? kept : res.routes[0];
-                tripState.selectedRouteId = defaultRoute ? defaultRoute.route_id : null;
-                if (defaultRoute) tripState.currentItinerary = defaultRoute;
+                // Mặc định ở Screen 2: ĐÓNG LẠI TOÀN BỘ các lộ trình, không mở sẵn lộ trình nào
+                tripState.selectedRouteId = null;
+                if (res.routes && res.routes.length > 0) {
+                    tripState.currentItinerary = res.routes[0];
+                }
+
+                if (tripState.sessionId) {
+                    localStorage.setItem('teravue_active_session', tripState.sessionId);
+                    const p = tripState.baseParams || {};
+                    saveTripToHistory(
+                        tripState.sessionId,
+                        p.user_preference || $('#user_preference').val(),
+                        p.start_time || $('#start_time').val() || '08:00',
+                        p.end_time || $('#end_time').val() || '20:00',
+                        p.vehicle_type || $('#vehicle_type').val() || 'xe_may'
+                    );
+                }
 
                 renderRouteCards(res.routes);
                 renderComparisonTable(res.routes);
@@ -1009,42 +1270,63 @@ $(document).ready(function () {
                 <div class="s2-timeline-list">
                     ${itemsHtml}
                 </div>
+                <div class="route-detail-footer text-end mt-3 pt-3 border-top">
+                    <button type="button" class="btn btn-primary-clean btn-accept-card-route" style="padding: 10px 20px; font-size: 0.92rem;">
+                        <i class="fa-solid fa-map-location-dot me-1"></i> Chốt phương án này & Xem bản đồ
+                    </button>
+                </div>
             </div>
         `;
     }
 
     function selectRouteOnScreen2(routeId) {
-        tripState.selectedRouteId = routeId;
-        if (tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes)) {
-            const chosen = tripState.currentRoutes.routes.find(r => r.route_id === routeId);
-            if (chosen) tripState.currentItinerary = chosen;
+        // Toggle mở / đóng: nếu nhấn vào route đang mở thì thu gọn lại, nếu nhấn route khác thì mở route đó
+        if (tripState.selectedRouteId === routeId) {
+            tripState.selectedRouteId = null;
+        } else {
+            tripState.selectedRouteId = routeId;
+            if (tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes)) {
+                const chosen = tripState.currentRoutes.routes.find(r => r.route_id === routeId);
+                if (chosen) tripState.currentItinerary = chosen;
+            }
         }
 
         $('#ai-routes-grid .route-card').each(function () {
-            const isMatch = $(this).attr('data-route-id') === routeId;
+            const isMatch = $(this).attr('data-route-id') === tripState.selectedRouteId;
             $(this)
                 .toggleClass('selected', isMatch)
                 .attr('aria-selected', isMatch ? 'true' : 'false')
                 .find('.route-card-select-indicator')
                 .html(isMatch
-                    ? '<i class="fa-solid fa-circle-check me-1"></i> Đang xem chi tiết'
-                    : 'Nhấn để xem Timeline chi tiết');
+                    ? '<i class="fa-solid fa-circle-check me-1"></i> Đang xem chi tiết <i class="fa-solid fa-chevron-up ms-1 chevron-icon"></i>'
+                    : 'Nhấn để xem Timeline chi tiết <i class="fa-solid fa-chevron-down ms-1 chevron-icon"></i>');
         });
 
         $('#route-comparison-table [data-route-id]').each(function () {
-            const isMatch = $(this).attr('data-route-id') === routeId;
+            const isMatch = $(this).attr('data-route-id') === tripState.selectedRouteId;
             $(this).toggleClass('comp-col-selected', isMatch);
         });
 
-        // Đồng bộ lựa chọn với Backend để nếu user mở Chatbot ngay tại Screen 2 thì sửa đúng route này
-        if (tripState.sessionId && routeId) {
+        $('.comparison-smart-card').each(function () {
+            const isMatch = $(this).attr('data-route-id') === tripState.selectedRouteId;
+            $(this).toggleClass('selected', isMatch);
+            $(this).find('.comp-select-btn')
+                .toggleClass('btn-primary', isMatch)
+                .toggleClass('btn-outline-primary', !isMatch)
+                .html(isMatch
+                    ? '<i class="fa-solid fa-check me-1"></i> Đang xem lộ trình này'
+                    : '<i class="fa-solid fa-arrow-right me-1"></i> Chọn phương án này');
+        });
+
+        // Đồng bộ lựa chọn với Backend
+        if (tripState.sessionId && tripState.selectedRouteId) {
             $.ajax({
                 url: `${API_BASE}/api/routes/select`,
                 method: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
                     session_id: tripState.sessionId,
-                    route_id: routeId
+                    route_id: tripState.selectedRouteId
                 }),
             });
         }
@@ -1068,7 +1350,8 @@ $(document).ready(function () {
 
             let photosHtml = '';
             if (places.length > 0) {
-                const photoItems = places.slice(0, 5).map((p, pIdx) => {
+                const maxVisible = 5;
+                const photoItems = places.slice(0, maxVisible).map((p, pIdx) => {
                     const imgUrl = firstDefined(p.url_hinh_anh, DEFAULT_PLACE_IMG);
                     const timeBadge = p.arrive_time ? `${p.arrive_time} · ` : '';
                     return `
@@ -1078,7 +1361,17 @@ $(document).ready(function () {
                         </div>
                     `;
                 }).join('');
-                photosHtml = `<div class="route-card-photos">${photoItems}</div>`;
+                let moreBadge = '';
+                if (places.length > maxVisible) {
+                    const rem = places.length - maxVisible;
+                    moreBadge = `
+                        <div class="route-photo-more-badge" title="Lộ trình còn ${rem} địa điểm tiếp theo">
+                            <div class="route-photo-more-circle">+${rem}</div>
+                            <span class="route-photo-more-label">Còn ${rem} điểm</span>
+                        </div>
+                    `;
+                }
+                photosHtml = `<div class="route-card-photos">${photoItems}${moreBadge}</div>`;
             }
 
             const detailTimelineHtml = buildScreen2RouteTimeline(places, vType);
@@ -1091,10 +1384,16 @@ $(document).ready(function () {
                     <div class="route-card-top">
                         <span class="route-card-theme">Route ${routeLetter} · ${firstDefined(r.theme_label, r.strategy, 'Phương án ' + (idx + 1))}</span>
                         <span class="route-card-select-indicator">
-                            ${isSelected ? '<i class="fa-solid fa-circle-check me-1"></i> Đang xem chi tiết' : 'Nhấn để xem Timeline chi tiết'}
+                            ${isSelected ? '<i class="fa-solid fa-circle-check me-1"></i> Đang xem chi tiết <i class="fa-solid fa-chevron-up ms-1 chevron-icon"></i>' : 'Nhấn để xem Timeline chi tiết <i class="fa-solid fa-chevron-down ms-1 chevron-icon"></i>'}
                         </span>
                     </div>
-                    <h4 class="route-card-title">${firstDefined(r.name, r.route_name, r.route_id)}</h4>
+                    <h4 class="route-card-title">${(() => {
+                        let t = firstDefined(r.name, r.route_name, r.route_id);
+                        if (t && totalDurationStr && /Thong thả/i.test(t)) {
+                            t = t.replace(/\s*·\s*Thong thả\s+[\w\d]+/gi, '') + ` · Thong thả ${totalDurationStr}`;
+                        }
+                        return t;
+                    })()}</h4>
                     <p class="route-card-desc">${firstDefined(r.description)}</p>
                     ${photosHtml}
                     <div class="route-card-metrics-grid">
@@ -1115,7 +1414,9 @@ $(document).ready(function () {
                             <span>Chi phí: ~${estCostStr}</span>
                         </span>
                     </div>
-                    ${detailTimelineHtml}
+                    <div class="route-detail-wrapper">
+                        ${detailTimelineHtml}
+                    </div>
                 `);
 
             $card.on('click', function () {
@@ -1136,6 +1437,12 @@ $(document).ready(function () {
                 if (places[pIdx]) openPlaceDetailModal(places[pIdx]);
             });
 
+            $card.find('.btn-accept-card-route').on('click', function (e) {
+                e.stopPropagation();
+                tripState.selectedRouteId = r.route_id;
+                $('#btn-accept-route').trigger('click');
+            });
+
             $grid.append($card);
         });
     }
@@ -1144,10 +1451,14 @@ $(document).ready(function () {
     // BẢNG SO SÁNH LỘ TRÌNH Ở CUỐI SCREEN 2
     // ============================================================
     function renderComparisonTable(routes) {
+        const $cardsGrid = $('#route-comparison-cards-grid').empty();
+        const $aiBox = $('#route-ai-recommendation-box').empty();
         const $table = $('#route-comparison-table').empty();
+
         if (!Array.isArray(routes) || routes.length === 0) return;
 
-        const routeStats = routes.map((r, idx) => {
+        // 1. Phân tích dữ liệu & tính toán các chỉ số
+        const parsedRoutes = routes.map((r, idx) => {
             const rawPlaces = Array.isArray(r.places) ? r.places : (Array.isArray(r.optimized_route) ? r.optimized_route : []);
             const places = rawPlaces.filter(
                 p => p.loai_hinh !== 'diem_xuat_phat' && p.id !== 'gps_current'
@@ -1155,39 +1466,198 @@ $(document).ready(function () {
             const totalMins = firstDefined(r.total_duration, r.total_time_minutes, 0);
             const travelMins = r.travel_time ? r.travel_time : places.reduce((acc, p) => acc + (p.travel_to_next ? p.travel_to_next : 0), 0);
             const distKm = computeRouteDistanceKm(r);
-            const costStr = formatCurrencyVND(estimateRouteCost(places));
+            const cost = estimateRouteCost(places);
+            const costStr = formatCurrencyVND(cost);
 
             const cafes = places.filter(p => p.loai_hinh === 'Cafe');
             const cultures = places.filter(p => p.loai_hinh === 'Tham quan' || p.loai_hinh === 'Checkin');
-            const avgVisit = places.length > 0
-                ? Math.round(places.reduce((acc, p) => acc + (p.visit_time ? p.visit_time : 60), 0) / places.length)
-                : 60;
+            const foods = places.filter(p => p.loai_hinh === 'Ăn uống');
+            const others = places.filter(p => !['Cafe', 'Tham quan', 'Checkin', 'Ăn uống'].includes(p.loai_hinh));
 
-            let relaxLabel = `Vừa phải (TB ${avgVisit}p/điểm)`;
-            if (r.theme === 'lively') {
-                relaxLabel = `🔥 Sôi động & Năng động (TB ${avgVisit}p/điểm)`;
-            } else if (r.theme === 'relax' || avgVisit >= 85) {
-                relaxLabel = `Rất thong thả (TB ${avgVisit}p/điểm)`;
-            } else if (r.theme === 'time_optimized' || avgVisit <= 50) {
-                relaxLabel = `Năng động · Tối ưu (TB ${avgVisit}p/điểm)`;
-            }
+            const totalCount = places.length || 1;
+            const culturePct = Math.round((cultures.length / totalCount) * 100);
+            const cafePct = Math.round((cafes.length / totalCount) * 100);
+            const foodPct = Math.round((foods.length / totalCount) * 100);
+            const otherPct = Math.max(0, 100 - culturePct - cafePct - foodPct);
+
+            // 2-3 điểm nổi bật
+            const highlights = places.slice(0, 3).map(p => p.ten);
 
             return {
                 route_id: r.route_id,
                 letter: `Route ${String.fromCharCode(65 + idx)}`,
                 name: firstDefined(r.name, r.route_name, r.route_id),
-                timeText: `${durationLabel(totalMins)} (di chuyển ${durationLabel(travelMins)})`,
-                placeCountText: `${places.length} địa điểm`,
-                distanceText: `${distKm} km`,
-                costText: `~${costStr}`,
-                cafeText: cafes.length > 0 ? `${cafes.length} điểm (${cafes.map(c => c.ten).join(', ')})` : 'Không có',
-                cultureText: cultures.length > 0 ? `${cultures.length} điểm (${cultures.map(c => c.ten).join(', ')})` : 'Không có',
-                relaxText: relaxLabel,
+                places,
+                totalMins,
+                travelMins,
+                distKm,
+                cost,
+                costStr,
+                cafes,
+                cultures,
+                foods,
+                others,
+                culturePct,
+                cafePct,
+                foodPct,
+                otherPct,
+                highlights,
             };
         });
 
+        // 2. Tìm giá trị cực trị để gắn nhãn danh hiệu
+        const distances = parsedRoutes.map(r => r.distKm);
+        const costs = parsedRoutes.map(r => r.cost);
+        const minDist = Math.min(...distances);
+        const minCost = Math.min(...costs);
+
+        // Gán danh hiệu Persona cho từng Route
+        parsedRoutes.forEach((st, idx) => {
+            if (st.distKm === minDist && minDist <= 7.0) {
+                st.badge = { text: 'Đi gần · Tiết kiệm sức', cls: 'badge-comp-speed', icon: 'fa-bolt' };
+            } else if (st.cost === minCost && minCost < 300000) {
+                st.badge = { text: 'Tối ưu ngân sách', cls: 'badge-comp-budget', icon: 'fa-coins' };
+            } else if (st.cultures.length >= 3) {
+                st.badge = { text: 'Di sản & Văn hóa', cls: 'badge-comp-culture', icon: 'fa-landmark' };
+            } else if (st.cafes.length >= 2 || st.cafePct >= 30) {
+                st.badge = { text: 'Cà phê chill & Sống ảo', cls: 'badge-comp-relax', icon: 'fa-mug-hot' };
+            } else if (idx === 0) {
+                st.badge = { text: 'Cân bằng & Toàn diện', cls: 'badge-comp-star', icon: 'fa-star' };
+            } else {
+                st.badge = { text: 'Trải nghiệm phong phú', cls: 'badge-comp-star', icon: 'fa-compass' };
+            }
+        });
+
+        // 3. Render Hộp Lời khuyên Trợ lý AI (Hướng 3)
+        const bestRoute = parsedRoutes[0];
+        const shortestRoute = parsedRoutes.find(r => r.distKm === minDist) || bestRoute;
+        const cultureRoute = parsedRoutes.slice().sort((a, b) => b.cultures.length - a.cultures.length)[0];
+
+        let aiRecItems = [];
+        if (bestRoute) {
+            aiRecItems.push(`
+                <div class="ai-rec-item">
+                    <strong>🏆 Phù hợp nhất cho chuyến đi:</strong> 
+                    <span class="text-primary fw-bold">${bestRoute.letter}</span> — Cân bằng lý tưởng giữa tham quan danh thắng lịch sử và ẩm thực phố cổ (${bestRoute.distKm} km, ${durationLabel(bestRoute.totalMins)}).
+                </div>
+            `);
+        }
+        if (shortestRoute && shortestRoute.route_id !== bestRoute.route_id) {
+            aiRecItems.push(`
+                <div class="ai-rec-item">
+                    <strong>⚡ Nếu bạn muốn đi gần & đỡ mỏi:</strong> 
+                    <span class="text-success fw-bold">${shortestRoute.letter}</span> — Quãng đường chỉ <strong>${shortestRoute.distKm} km</strong> (~${shortestRoute.travelMins} phút di chuyển), rất nhẹ nhàng để tránh nắng nóng hoặc tắc đường.
+                </div>
+            `);
+        }
+        if (cultureRoute && cultureRoute.cultures.length >= 2 && cultureRoute.route_id !== bestRoute.route_id && cultureRoute.route_id !== shortestRoute.route_id) {
+            aiRecItems.push(`
+                <div class="ai-rec-item">
+                    <strong>🏛️ Nếu bạn ưu tiên tìm hiểu lịch sử:</strong> 
+                    <span class="text-purple fw-bold" style="color: #6D28D9;">${cultureRoute.letter}</span> — Tập trung ${cultureRoute.cultures.length} di tích lịch sử hàng đầu Hà Nội với thời lượng dừng sâu sắc.
+                </div>
+            `);
+        }
+
+        $aiBox.html(`
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <div class="ai-rec-avatar">
+                    <i class="fa-solid fa-wand-magic-sparkles text-primary" style="font-size: 0.85rem;"></i>
+                </div>
+                <div class="fw-bold text-main" style="font-size: 0.95rem;">Trợ lý AI gợi ý lựa chọn nhanh:</div>
+            </div>
+            <div class="d-flex flex-column gap-2">
+                ${aiRecItems.join('')}
+            </div>
+        `);
+
+        // 4. Render Bộ thẻ so sánh thông minh (Hướng 1)
+        parsedRoutes.forEach(st => {
+            const isSelected = st.route_id === tripState.selectedRouteId;
+            const distBadge = st.distKm === minDist
+                ? '<span class="badge bg-success-subtle text-success border border-success-subtle px-1">Ngắn nhất</span>'
+                : '<span class="comp-metric-sub">Toàn cung</span>';
+
+            const costBadge = st.cost === minCost
+                ? '<span class="badge bg-success-subtle text-success border border-success-subtle px-1">Rẻ nhất</span>'
+                : '<span class="comp-metric-sub">Dự kiến</span>';
+
+            const $card = $(`
+                <div class="comparison-smart-card ${isSelected ? 'selected' : ''}" data-route-id="${st.route_id}">
+                    <div>
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <span class="comp-route-letter">${st.letter}</span>
+                            <span class="badge ${st.badge.cls}"><i class="fa-solid ${st.badge.icon} me-1"></i>${st.badge.text}</span>
+                        </div>
+
+                        <div class="comp-route-title mb-2 text-truncate" title="${escapeHtml(st.name)}">${escapeHtml(st.name)}</div>
+
+                        <!-- 4 Chỉ số cốt lõi -->
+                        <div class="comp-metrics-grid mb-3">
+                            <div class="comp-metric-item">
+                                <span class="comp-metric-label"><i class="fa-regular fa-clock me-1"></i>Thời gian</span>
+                                <span class="comp-metric-val">${durationLabel(st.totalMins)}</span>
+                                <span class="comp-metric-sub">Di chuyển ${st.travelMins}p</span>
+                            </div>
+                            <div class="comp-metric-item">
+                                <span class="comp-metric-label"><i class="fa-solid fa-route me-1"></i>Quãng đường</span>
+                                <span class="comp-metric-val ${st.distKm === minDist ? 'text-success fw-bold' : ''}">${st.distKm} km</span>
+                                ${distBadge}
+                            </div>
+                            <div class="comp-metric-item">
+                                <span class="comp-metric-label"><i class="fa-solid fa-wallet me-1"></i>Chi phí</span>
+                                <span class="comp-metric-val ${st.cost === minCost ? 'text-success fw-bold' : ''}">~${st.costStr}</span>
+                                ${costBadge}
+                            </div>
+                            <div class="comp-metric-item">
+                                <span class="comp-metric-label"><i class="fa-solid fa-location-dot me-1"></i>Điểm dừng</span>
+                                <span class="comp-metric-val">${st.places.length} điểm</span>
+                                <span class="comp-metric-sub">Khám phá</span>
+                            </div>
+                        </div>
+
+                        <!-- Mini progress bar cơ cấu trải nghiệm -->
+                        <div class="comp-activity-wrap mb-3">
+                            <div class="d-flex justify-content-between small text-secondary mb-1" style="font-size: 0.75rem;">
+                                <span>Cơ cấu hoạt động</span>
+                                <span>🏛️ ${st.cultures.length} · ☕ ${st.cafes.length} ${st.foods.length ? '· 🍜 ' + st.foods.length : ''}</span>
+                            </div>
+                            <div class="comp-activity-bar d-flex rounded-pill overflow-hidden">
+                                <div style="width: ${st.culturePct}%; background-color: #3B82F6;" title="${st.cultures.length} điểm Văn hóa (${st.culturePct}%)"></div>
+                                <div style="width: ${st.cafePct}%; background-color: #F59E0B;" title="${st.cafes.length} quán Cafe (${st.cafePct}%)"></div>
+                                <div style="width: ${st.foodPct}%; background-color: #10B981;" title="${st.foods.length} điểm Ăn uống (${st.foodPct}%)"></div>
+                                <div style="width: ${st.otherPct}%; background-color: #94A3B8;" title="${st.others.length} điểm khác"></div>
+                            </div>
+                        </div>
+
+                        <!-- Điểm nhấn chính -->
+                        <div class="comp-highlights mb-3">
+                            <div class="small text-secondary mb-1" style="font-size: 0.75rem;">Điểm nhấn chính:</div>
+                            <div class="d-flex flex-wrap gap-1">
+                                ${st.highlights.map(h => `<span class="badge bg-light text-dark border text-truncate" style="max-width: 140px; font-weight: normal; font-size: 0.75rem;">${escapeHtml(h)}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Nút chọn hành động -->
+                    <div class="comp-card-action mt-2">
+                        <button type="button" class="btn w-100 ${isSelected ? 'btn-primary' : 'btn-outline-primary'} btn-sm comp-select-btn">
+                            ${isSelected ? '<i class="fa-solid fa-check me-1"></i> Đang xem lộ trình này' : '<i class="fa-solid fa-arrow-right me-1"></i> Chọn phương án này'}
+                        </button>
+                    </div>
+                </div>
+            `);
+
+            $card.on('click', function () {
+                selectRouteOnScreen2(st.route_id);
+            });
+
+            $cardsGrid.append($card);
+        });
+
+        // 5. Render bảng ẩn cho tương thích ngược
         let theadHtml = '<thead><tr><th>Tiêu chí</th>';
-        routeStats.forEach(st => {
+        parsedRoutes.forEach(st => {
             const isSel = st.route_id === tripState.selectedRouteId ? 'comp-col-selected' : '';
             theadHtml += `
                 <th class="${isSel}" data-route-id="${st.route_id}">
@@ -1199,32 +1669,26 @@ $(document).ready(function () {
         theadHtml += '</tr></thead>';
 
         const criteriaRows = [
-            { label: 'Thời gian', key: 'timeText' },
-            { label: 'Số điểm', key: 'placeCountText' },
-            { label: 'Quãng đường', key: 'distanceText' },
-            { label: 'Chi phí', key: 'costText' },
-            { label: 'Cafe', key: 'cafeText' },
-            { label: 'Văn hóa', key: 'cultureText' },
-            { label: 'Thư giãn', key: 'relaxText' },
+            { label: 'Thời gian', getVal: st => `${durationLabel(st.totalMins)} (di chuyển ${durationLabel(st.travelMins)})` },
+            { label: 'Số điểm', getVal: st => `${st.places.length} địa điểm` },
+            { label: 'Quãng đường', getVal: st => `${st.distKm} km` },
+            { label: 'Chi phí', getVal: st => `~${st.costStr}` },
+            { label: 'Cafe', getVal: st => st.cafes.length > 0 ? `${st.cafes.length} điểm (${st.cafes.map(c => c.ten).join(', ')})` : 'Không có' },
+            { label: 'Văn hóa', getVal: st => st.cultures.length > 0 ? `${st.cultures.length} điểm (${st.cultures.map(c => c.ten).join(', ')})` : 'Không có' },
+            { label: 'Thư giãn', getVal: st => st.badge.text },
         ];
 
         let tbodyHtml = '<tbody>';
         criteriaRows.forEach(row => {
             tbodyHtml += `<tr><td>${row.label}</td>`;
-            routeStats.forEach(st => {
+            parsedRoutes.forEach(st => {
                 const isSel = st.route_id === tripState.selectedRouteId ? 'comp-col-selected' : '';
-                tbodyHtml += `<td class="${isSel}" data-route-id="${st.route_id}">${st[row.key]}</td>`;
+                tbodyHtml += `<td class="${isSel}" data-route-id="${st.route_id}">${row.getVal(st)}</td>`;
             });
             tbodyHtml += '</tr>';
         });
         tbodyHtml += '</tbody>';
-
         $table.html(theadHtml + tbodyHtml);
-
-        $table.find('[data-route-id]').on('click', function () {
-            const rid = $(this).attr('data-route-id');
-            if (rid) selectRouteOnScreen2(rid);
-        });
     }
 
     // ============================================================
@@ -1249,13 +1713,29 @@ $(document).ready(function () {
     function runQuickAction(qa) {
         $('#ai-quick-actions .quick-action-chip').prop('disabled', true);
 
+        // 1. Tự động hiển thị và mở khung chat AI ở góc dưới bên phải
+        $('#global-ai-assistant').removeClass('d-none');
+        $('#ai-map-chat').addClass('open');
+
+        const userMsg = firstDefined(qa.label, qa.instruction, 'Thêm địa điểm');
+        appendChatBubble(escapeHtml(userMsg), 'user');
+        appendChatBubble('<i class="fa-solid fa-spinner fa-spin me-2"></i>Đang tìm phương án ' + escapeHtml(userMsg.toLowerCase()) + ' phù hợp với bạn...', 'assistant loading');
+
+        // Xác định current_ids của lộ trình đang chọn (hoặc lộ trình đầu tiên)
+        let currIds = currentItineraryIds();
+        if (!currIds.length && tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes) && tripState.currentRoutes.routes.length) {
+            const firstR = tripState.currentRoutes.routes.find(r => r.route_id === tripState.selectedRouteId) || tripState.currentRoutes.routes[0];
+            const rPlaces = Array.isArray(firstR.optimized_route) ? firstR.optimized_route : (Array.isArray(firstR.places) ? firstR.places : []);
+            currIds = rPlaces.filter(p => p.id !== 'gps_current' && p.loai_hinh !== 'diem_xuat_phat').map(p => String(p.id));
+        }
+
         const payload = {
             region: 'Hanoi',
             vehicle_type: $('#vehicle_type').val(),
             start_time: $('#start_time').val(),
             end_time: $('#end_time').val(),
             user_preference: $('#user_preference').val(),
-            current_ids: tripState.aiSuggestedIds,
+            current_ids: currIds,
             instruction: firstDefined(qa.instruction, qa.label),
             session_id: tripState.sessionId,
         };
@@ -1266,16 +1746,48 @@ $(document).ready(function () {
             contentType: 'application/json',
             data: JSON.stringify(payload),
             success: function (res) {
+                $('#ai-map-chat-log .loading').remove();
+                $('#ai-quick-actions .quick-action-chip').prop('disabled', false);
+
                 tripState.sessionId = firstDefined(res.session_id, tripState.sessionId);
                 tripState.aiSuggestedIds = Array.isArray(res.suggested_ids) ? res.suggested_ids : tripState.aiSuggestedIds;
                 if (res.advice_text) {
                     $('#ai-advice-content').html(res.advice_text.replace(/\n/g, '<br>'));
                 }
-                fetchRoutes(() => $('#ai-quick-actions .quick-action-chip').prop('disabled', false));
+
+                // Nếu AI trả về danh sách Options (ví dụ 2-3 quán ăn/cafe) -> render ngay trong khung chat AI
+                if (res.options && res.options.length > 0) {
+                    renderAiRefineOptions(res);
+                } else {
+                    // Nếu AI trả về trực tiếp lộ trình mới -> cập nhật và reload Screen 2 ngay lập tức
+                    $.ajax({
+                        url: `${API_BASE}/api/itinerary/update`,
+                        method: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify({ session_id: tripState.sessionId }),
+                        success: function (updRes) {
+                            if (updRes.status === 'success' && updRes.itinerary) {
+                                setCurrentItinerary(updRes.itinerary);
+                                refreshCurrentItinerary();
+                                if (tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes)) {
+                                    renderRouteCards(tripState.currentRoutes.routes);
+                                    renderComparisonTable(tripState.currentRoutes.routes);
+                                }
+                            }
+                        }
+                    });
+                    if (res.advice_text) {
+                        appendChatBubble(escapeHtml(res.advice_text), 'assistant');
+                    }
+                }
+
+                const log = document.getElementById('ai-map-chat-log');
+                if (log) log.scrollTop = log.scrollHeight;
             },
             error: function (xhr) {
-                alert("Không cập nhật được lộ trình: " + firstDefined(xhr.responseJSON && xhr.responseJSON.detail, "Kiểm tra Backend."));
+                $('#ai-map-chat-log .loading').remove();
                 $('#ai-quick-actions .quick-action-chip').prop('disabled', false);
+                appendChatBubble("Không thể tìm phương án lúc này: " + formatErrorDetail(xhr, "Kiểm tra kết nối Backend."), 'assistant');
             }
         });
     }
@@ -1330,11 +1842,11 @@ $(document).ready(function () {
 
     $('#btn-ask-ai, #btn-reject-route').click(function (e) {
         if (e && e.preventDefault) e.preventDefault();
-        const userPref = $('#user_preference').val().trim();
+        let userPref = $('#user_preference').val().trim();
         if (!userPref) {
-            alert("Hãy nhập mong muốn của bạn!");
-            $('#user_preference').focus();
-            return;
+            userPref = 'Khám phá các điểm đến tiêu biểu tại Hà Nội';
+            $('#user_preference').val(userPref);
+            showCrudBanner('Đã tự động chọn chủ đề: ' + userPref);
         }
 
         const $askBtn = $('#btn-ask-ai');
@@ -1370,9 +1882,12 @@ $(document).ready(function () {
     // SCREEN 2 → SCREEN 3 (ITINERARY DETAIL & ON-TRIP MAP)
     // ============================================================
     $('#btn-accept-route').click(function () {
-        if (!tripState.currentRoutes || !tripState.selectedRouteId) {
+        if (!tripState.currentRoutes || !tripState.currentRoutes.routes || !tripState.currentRoutes.routes.length) {
             alert('Chưa có lộ trình nào để chốt, vui lòng thử lại.');
             return;
+        }
+        if (!tripState.selectedRouteId) {
+            tripState.selectedRouteId = tripState.currentRoutes.routes[0].route_id;
         }
         const $btn = $(this);
         $btn.html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang mở bản đồ...').prop('disabled', true);
@@ -1397,6 +1912,102 @@ $(document).ready(function () {
             complete: () => $btn.html('<i class="fa-solid fa-check me-1"></i> Chốt lộ trình & Vẽ bản đồ').prop('disabled', false)
         });
     });
+
+    // ============================================================
+
+    // MOBILE VIEW SWITCHER (CHẾ ĐỘ XEM TRÊN DI ĐỘNG: CHIA ĐÔI | BẢN ĐỒ | LỊCH TRÌNH)
+
+    // ============================================================
+
+    $('.btn-view-mode').on('click', function () {
+
+        const mode = $(this).data('mode');
+
+        $('.btn-view-mode').removeClass('active');
+
+        $(this).addClass('active');
+
+
+
+        const $sec = $('#map-section');
+
+        $sec.removeClass('mobile-mode-map mobile-mode-list');
+
+
+
+        if (mode === 'map') {
+
+            $sec.addClass('mobile-mode-map');
+
+        } else if (mode === 'list') {
+
+            $sec.addClass('mobile-mode-list');
+
+        }
+
+        // mode === 'split' (mặc định chia đôi: Map cố định 38vh ở trên, timeline cuộn ở dưới)
+
+
+
+        if (typeof map !== 'undefined' && map) {
+
+            setTimeout(() => map.invalidateSize(), 260);
+
+        }
+
+    });
+
+
+
+    // Khi người dùng bấm/chạm vào một điểm trên Timeline: tự động căn giữa bản đồ đến điểm đó
+
+    $('#timeline-list').on('click', '.timeline-item', function (e) {
+
+        if ($(e.target).closest('button, input, a, .btn-crud-remove, .btn-crud-fav, .btn-crud-time').length) {
+
+            return;
+
+        }
+
+        const pid = $(this).data('id');
+
+        if (!pid || typeof map === 'undefined' || !map) return;
+
+
+
+        const currentItin = getActiveItinerary();
+
+        const routeLocs = (currentItin && (currentItin.optimized_route || currentItin.places)) || [];
+
+        const idx = routeLocs.findIndex(p => String(p.id) === String(pid));
+
+
+
+        if (idx >= 0) {
+
+            const loc = routeLocs[idx];
+
+            const lat = Number(loc.lat || loc.vi_do);
+
+            const lon = Number(loc.lon || loc.kinh_do);
+
+            if (lat && lon) {
+
+                map.panTo([lat, lon], { animate: true, duration: 0.5 });
+
+                if (mapMarkers && mapMarkers[idx]) {
+
+                    mapMarkers[idx].openPopup();
+
+                }
+
+            }
+
+        }
+
+    });
+
+
 
     // Cập nhật thanh tiến độ On-Trip (số điểm đã đi / tổng số điểm)
     function updateOnTripProgressUI(routeLocs) {
@@ -1509,6 +2120,12 @@ $(document).ready(function () {
                     session_id: tripState.sessionId,
                     route_id: routes[newIdx].route_id
                 }),
+                success: function (res) {
+                    if (res && res.status === 'success' && res.itinerary) {
+                        setCurrentItinerary(res.itinerary);
+                        refreshCurrentItinerary();
+                    }
+                }
             });
         });
 
@@ -1523,7 +2140,32 @@ $(document).ready(function () {
         $(this).addClass('active');
         $('#vehicle_type').val(vType);
         if (tripState.baseParams) tripState.baseParams.vehicle_type = vType;
-        refreshCurrentItinerary();
+
+        if (tripState.sessionId) {
+            const vNames = { xe_may: 'Xe máy', o_to: 'Ô tô', di_bo: 'Đi bộ', xe_buyt: 'Xe buýt' };
+            $.ajax({
+                url: `${API_BASE}/api/itinerary/change-vehicle`,
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    session_id: tripState.sessionId,
+                    vehicle_type: vType,
+                }),
+                success: function (res) {
+                    if (res && res.status === 'success' && res.itinerary) {
+                        applyDirectItineraryUpdate(res, `Đã đổi phương tiện sang ${vNames[vType] || vType} và tính lại thời gian di chuyển.`);
+                    } else {
+                        refreshCurrentItinerary();
+                    }
+                },
+                error: function (xhr) {
+                    refreshCurrentItinerary();
+                    showCrudBanner(formatErrorDetail(xhr, 'Không thể cập nhật phương tiện trên máy chủ.'), true);
+                }
+            });
+        } else {
+            refreshCurrentItinerary();
+        }
     });
 
     // ============================================================
@@ -1656,10 +2298,9 @@ $(document).ready(function () {
                 $li.addClass('active');
                 const m = mapMarkers[idx];
                 if (m && loc.lat && loc.lon) {
-                    map.panTo([loc.lat, loc.lon]);
+                    map.panTo([loc.lat, loc.lon], { animate: true, duration: 0.4 });
                     m.openPopup();
                 }
-                openPlaceDetailModal(loc);
             });
 
             // 1. Nút ＋ Thêm
@@ -1788,22 +2429,35 @@ $(document).ready(function () {
             const pid = String(firstDefined(loc.id));
             const isVisited = visitedPlaceIds.has(pid);
             const iconHtml = `<div class="clean-map-marker ${isVisited ? 'visited' : ''}">${isVisited ? '✓' : (idx + 1)}</div>`;
-            const review = String(firstDefined(loc.review)).trim();
-            const reviewHtml = review ? `<div class="mt-1 small text-secondary fst-italic">“${review}”</div>` : '';
+            const review = getAccentedReview(loc);
+            let reviewSnippet = '';
+            if (review && review !== 'None' && review !== 'undefined' && review !== 'null') {
+                let clean = review.replace(/#\S+/g, '').replace(/\*+/g, '').replace(/\s+/g, ' ').trim();
+                if (clean.length > 95) clean = clean.substring(0, 95).trim() + '...';
+                if (clean) {
+                    reviewSnippet = `<div class="mt-1 small text-secondary fst-italic" style="font-size: 0.76rem; line-height: 1.35;">“${escapeHtml(clean)}”</div>`;
+                }
+            }
             const rating = getPlaceRating(loc);
 
             const popupHtml = `
-                <div style="min-width: 205px; padding: 2px;">
-                    <div class="fw-bold text-main" style="font-size: 0.92rem;">
-                        ${idx + 1}. ${loc.ten} ${isVisited ? '<span class="badge bg-success ms-1">Đã đi</span>' : ''}
+                <div class="map-popup-card" style="min-width: 210px; max-width: 260px; padding: 2px;">
+                    <div class="fw-bold text-main" style="font-size: 0.9rem; line-height: 1.3;">
+                        ${idx + 1}. ${escapeHtml(loc.ten)} ${isVisited ? '<span class="badge bg-success ms-1" style="font-size: 0.65rem;">Đã đi</span>' : ''}
                     </div>
-                    <div class="small text-secondary mt-1">
-                        ${formatCategoryLabel(loc.loai_hinh)} <span class="badge bg-light text-dark border ms-1">★ ${rating}</span>
+                    <div class="small text-secondary mt-1 d-flex align-items-center gap-1" style="font-size: 0.78rem;">
+                        <span>${formatCategoryLabel(loc.loai_hinh)}</span>
+                        <span class="badge bg-light text-dark border ms-1">★ ${rating}</span>
                     </div>
-                    <div class="small fw-semibold mt-1" style="color: #3978D4;">
-                        ${firstDefined(loc.arrive_time)} – ${firstDefined(loc.depart_time)} · ${formatCurrencyVND(estimatePlaceCost(loc))}
+                    <div class="small fw-semibold mt-1" style="color: #2563EB; font-size: 0.78rem;">
+                        ${firstDefined(loc.arrive_time, '08:00')} – ${firstDefined(loc.depart_time, '09:00')} · ${formatCurrencyVND(estimatePlaceCost(loc))}
                     </div>
-                    ${reviewHtml}
+                    ${reviewSnippet}
+                    <div class="mt-2 pt-1 border-top d-flex justify-content-end">
+                        <button type="button" class="btn btn-xs btn-outline-primary py-0 px-2 btn-popup-more" data-idx="${idx}" data-pid="${escapeHtml(pid)}" style="font-size: 0.72rem; border-radius: 12px; cursor: pointer;">
+                            Xem chi tiết ➜
+                        </button>
+                    </div>
                 </div>
             `;
 
@@ -1814,7 +2468,7 @@ $(document).ready(function () {
                     iconSize: [30, 30],
                     iconAnchor: [15, 15]
                 })
-            }).bindPopup(popupHtml).addTo(map);
+            }).bindPopup(popupHtml, { maxWidth: 280, minWidth: 210 }).addTo(map);
 
             mapMarkers.push(marker);
         });
@@ -1857,6 +2511,25 @@ $(document).ready(function () {
         }
     }
 
+    // Sự kiện mở chi tiết địa điểm khi bấm nút "Xem chi tiết ➜" trong popup Bản đồ
+    $(document).on('click', '.btn-popup-more', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const pIdx = parseInt($(this).attr('data-idx'), 10);
+        const pid = String($(this).attr('data-pid') || '');
+        const itin = getActiveItinerary();
+        const routeLocs = (itin && (itin.optimized_route || itin.places)) || [];
+        let targetPlace = (!isNaN(pIdx) && routeLocs[pIdx]) ? routeLocs[pIdx] : null;
+        if (!targetPlace && pid && Array.isArray(tripState.currentLocationData)) {
+            targetPlace = tripState.currentLocationData.find(p => String(p.id) === pid);
+        }
+        if (targetPlace) {
+            openPlaceDetailModal(targetPlace);
+        } else {
+            console.warn('Place not found for detail popup:', pIdx, pid);
+        }
+    });
+
     // ============================================================
     // LOGIC XỬ LÝ 6 THAO TÁC CRUD TRỰC TIẾP VỚI BACKEND
     // ============================================================
@@ -1898,11 +2571,12 @@ $(document).ready(function () {
             success: function (res) {
                 applyDirectItineraryUpdate(res, 'Đã sắp xếp lại thứ tự các điểm đến.');
             },
-            error: function () {
-                itinerary.optimized_route = places;
-                itinerary.places = places;
+            error: function (xhr) {
+                itinerary.optimized_route = rawPlaces;
+                itinerary.places = rawPlaces;
                 refreshCurrentItinerary();
-                showCrudBanner('Đã đổi thứ tự địa điểm trên lịch trình.');
+                const errText = formatErrorDetail(xhr, 'Không thể cập nhật thứ tự điểm do lỗi kết nối. Đang hoàn tác...');
+                showCrudBanner(errText, true);
             }
         });
     }
@@ -1935,11 +2609,194 @@ $(document).ready(function () {
         });
     }
 
+    let replaceModalState = {
+        loc: null,
+        candidates: [],
+        currentCategory: 'same',
+        searchQuery: ''
+    };
+
+    function removeVietnameseTones(str) {
+        if (!str) return '';
+        return String(str)
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .replace(/[đĐ]/g, 'd')
+            .toLowerCase()
+            .trim();
+    }
+
+    function renderReplaceCandidatesList(modalEl) {
+        const $list = $('#replace-candidates-list');
+        const loc = replaceModalState.loc;
+        if (!loc) return;
+
+        let filtered = (replaceModalState.candidates || []).slice();
+
+        // 1. Lọc theo category
+        const cat = replaceModalState.currentCategory;
+        if (cat === 'same') {
+            const sameList = filtered.filter(c => c.same_category || c.compatible_category);
+            if (sameList.length > 0) {
+                filtered = sameList;
+            }
+        } else if (cat) {
+            filtered = filtered.filter(c => {
+                const cCat = removeVietnameseTones(c.loai_hinh || '');
+                return cCat.includes(removeVietnameseTones(cat));
+            });
+        }
+
+        // 2. Lọc theo search query
+        const q = removeVietnameseTones(replaceModalState.searchQuery || '');
+        if (q) {
+            filtered = filtered.filter(c => {
+                const name = removeVietnameseTones(c.ten || '');
+                const rev = removeVietnameseTones(firstDefined(c.review, c.thong_tin_chi_tiet, ''));
+                return name.includes(q) || rev.includes(q);
+            });
+        }
+
+        // Cập nhật tip ngữ cảnh
+        const $tip = $('#replace-context-text');
+        const locCatName = formatCategoryLabel(loc.loai_hinh);
+        if (cat === 'same') {
+            const hasExact = filtered.some(c => c.same_category);
+            if (hasExact) {
+                $tip.html(`Gợi ý các địa điểm <strong>cùng loại hình (${escapeHtml(locCatName)})</strong>, gần lộ trình và đang mở cửa:`);
+            } else {
+                $tip.html(`Các điểm <strong>${escapeHtml(locCatName)}</strong> khác đã có trong lộ trình. Dưới đây là các gợi ý lân cận tương đương:`);
+            }
+        } else if (cat === 'Ăn uống') {
+            $tip.html(`Gợi ý nhà hàng, quán ăn đặc sản Hà Nội lân cận để đổi bữa:`);
+        } else if (cat === 'Cafe') {
+            $tip.html(`Gợi ý quán cafe đẹp, không gian thư giãn gần cung đường:`);
+        } else if (cat === 'TTTM') {
+            $tip.html(`Gợi ý trung tâm thương mại, khu vui chơi & rạp chiếu phim gần đó:`);
+        } else if (cat === 'Tham quan') {
+            $tip.html(`Gợi ý di tích văn hóa, điểm tham quan danh thắng thủ đô:`);
+        } else {
+            $tip.html(`Tất cả địa điểm gợi ý gần lộ trình di chuyển:`);
+        }
+
+        if (filtered.length === 0) {
+            $list.html(`
+                <div class="text-center py-4 px-3" style="background: var(--bg-secondary); border-radius: var(--radius-md);">
+                    <i class="fa-solid fa-filter-circle-xmark fa-2x text-muted mb-2"></i>
+                    <div class="fw-bold text-main mb-1">Không tìm thấy địa điểm phù hợp</div>
+                    <p class="small text-secondary mb-3">Không có điểm nào khớp với tiêu chí bộ lọc trong khung giờ này.</p>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-reset-replace-filter">
+                        <i class="fa-solid fa-rotate-left me-1"></i> Xem tất cả địa điểm
+                    </button>
+                </div>
+            `);
+            $('#btn-reset-replace-filter').on('click', function () {
+                replaceModalState.currentCategory = '';
+                replaceModalState.searchQuery = '';
+                $('#replace-search-input').val('');
+                $('#replace-category-chips .btn').removeClass('active');
+                $('#replace-category-chips .btn[data-cat=""]').addClass('active');
+                renderReplaceCandidatesList(modalEl);
+            });
+            return;
+        }
+
+        $list.empty();
+        filtered.forEach(c => {
+            const img = firstDefined(c.url_hinh_anh, DEFAULT_PLACE_IMG);
+            const rating = getPlaceRating(c);
+            const openBadge = c.open_time && c.close_time ? `${c.open_time}–${c.close_time}` : 'Đang mở cửa';
+            const distFromTarget = c.dist_from_target_km !== undefined ? c.dist_from_target_km : (c.distance_km !== undefined ? c.distance_km : 1.2);
+            
+            // Badge phù hợp loại hình
+            let badgeMatch = '';
+            if (c.same_category) {
+                badgeMatch = '<span class="badge bg-success-subtle text-success border border-success-subtle"><i class="fa-solid fa-check me-1"></i>Cùng loại hình</span>';
+            } else if (c.compatible_category) {
+                badgeMatch = '<span class="badge bg-info-subtle text-info border border-info-subtle"><i class="fa-solid fa-sparkles me-1"></i>Tương đương</span>';
+            } else {
+                badgeMatch = `<span class="badge bg-light text-secondary border">${formatCategoryLabel(c.loai_hinh)}</span>`;
+            }
+
+            // Route impact badge
+            let impactBadge = '';
+            if (c.delta_dist_km !== undefined && c.delta_dist_km !== null) {
+                if (c.delta_dist_km < 0) {
+                    impactBadge = `<span class="badge bg-success-subtle text-success border border-success-subtle" title="Tiết kiệm quãng đường"><i class="fa-solid fa-route me-1"></i>Ngắn hơn ${Math.abs(c.delta_dist_km)} km</span>`;
+                } else if (c.delta_dist_km > 0) {
+                    impactBadge = `<span class="badge bg-light text-secondary border" title="Độ lệch so với cung đường hiện tại">+${c.delta_dist_km} km</span>`;
+                } else {
+                    impactBadge = `<span class="badge bg-light text-secondary border">Giữ nguyên cự ly</span>`;
+                }
+            }
+
+            // Duration badge
+            const visitTime = c.time || c.thoi_gian_tham_quan_phut || 45;
+
+            // Accented review snippet
+            const revText = getAccentedReview(c) || firstDefined(c.review, c.thong_tin_chi_tiet, '');
+
+            const $row = $(`
+                <div class="crud-candidate-card">
+                    <div class="d-flex align-items-center gap-3" style="min-width: 0; flex: 1;">
+                        <img src="${img}" alt="${escapeHtml(c.ten)}" class="crud-cand-img" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
+                        <div style="min-width: 0;">
+                            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                <span class="fw-bold text-main text-truncate" style="max-width: 280px;">${escapeHtml(c.ten)}</span>
+                                <span class="badge bg-light text-dark border">★ ${rating}</span>
+                                ${badgeMatch}
+                            </div>
+                            <div class="small text-secondary d-flex flex-wrap align-items-center gap-1 gap-md-2 mb-1">
+                                <span><i class="fa-solid fa-location-arrow me-1"></i>Cách ${distFromTarget} km</span>
+                                <span>·</span>
+                                <span><i class="fa-regular fa-clock me-1"></i>⏱ ${visitTime}p</span>
+                                ${impactBadge ? '<span>·</span>' + impactBadge : ''}
+                                <span>·</span>
+                                <span class="${c.is_open ? 'text-success' : 'text-danger'}">🕒 ${openBadge}</span>
+                            </div>
+                            <div class="small text-secondary fst-italic text-truncate" style="max-width: 440px;">${escapeHtml(revText)}</div>
+                        </div>
+                    </div>
+                    <div class="crud-card-action ms-md-3">
+                        <button type="button" class="btn-primary-clean btn-sm text-nowrap px-3 py-1">
+                            <i class="fa-solid fa-arrows-rotate me-1"></i> Chọn thay thế
+                        </button>
+                    </div>
+                </div>
+            `);
+
+            $row.find('button').on('click', function () {
+                executeReplacePlace(String(loc.id), String(c.id), modalEl);
+            });
+            $list.append($row);
+        });
+    }
+
     function openReplacePlaceModal(loc) {
+        replaceModalState.loc = loc;
+        replaceModalState.candidates = [];
+        replaceModalState.currentCategory = 'same';
+        replaceModalState.searchQuery = '';
+
         $('#replace-old-place-id').val(String(loc.id));
         $('#replace-old-place-name').text(loc.ten);
-        const $list =$('#replace-candidates-list').html(
-            '<div class="text-center py-4 text-secondary"><i class="fa-solid fa-spinner fa-spin me-2"></i>Đang tìm địa điểm thay thế phù hợp nhất...</div>'
+        $('#replace-old-place-cat').text(formatCategoryLabel(loc.loai_hinh));
+        
+        const locTime = firstDefined(loc.thoi_gian_tham_quan_phut, loc.time, 45);
+        $('#replace-old-place-time').html(`<i class="fa-regular fa-clock me-1"></i>${locTime} phút`);
+
+        if (loc.arrive_time && loc.leave_time) {
+            $('#replace-old-place-slot').text(`${loc.arrive_time}–${loc.leave_time}`).show();
+        } else {
+            $('#replace-old-place-slot').hide();
+        }
+
+        $('#replace-search-input').val('');
+        $('#replace-category-chips .btn').removeClass('active');
+        $('#replace-category-chips .btn[data-cat="same"]').addClass('active');
+
+        const $list = $('#replace-candidates-list').html(
+            '<div class="text-center py-4 text-secondary"><i class="fa-solid fa-spinner fa-spin me-2"></i>Đang tìm địa điểm thay thế tối ưu...</div>'
         );
 
         const modalEl = document.getElementById('replacePlaceModal');
@@ -1947,44 +2804,34 @@ $(document).ready(function () {
             window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
         }
 
+        // Đăng ký event cho search và category chips
+        $('#replace-search-input').off('input').on('input', function () {
+            replaceModalState.searchQuery = $(this).val();
+            renderReplaceCandidatesList(modalEl);
+        });
+
+        $('#replace-category-chips .btn').off('click').on('click', function () {
+            $('#replace-category-chips .btn').removeClass('active');
+            $(this).addClass('active');
+            replaceModalState.currentCategory = $(this).data('cat');
+            renderReplaceCandidatesList(modalEl);
+        });
+
         $.ajax({
             url: `${API_BASE}/api/itinerary/replacement-candidates`,
             method: 'GET',
             data: {
                 session_id: tripState.sessionId,
                 place_id: String(loc.id),
-                limit: 6
+                limit: 25
             },
             success: function (res) {
-                const cands = Array.isArray(res.candidates) ? res.candidates : [];
-                if (cands.length === 0) {
+                replaceModalState.candidates = Array.isArray(res.candidates) ? res.candidates : [];
+                if (replaceModalState.candidates.length === 0) {
                     $list.html('<div class="text-center py-3 text-secondary">Không tìm thấy địa điểm thay thế nào khác phù hợp trong khung giờ này.</div>');
                     return;
                 }
-                $list.empty();
-                cands.forEach(c => {
-                    const img = firstDefined(c.url_hinh_anh, DEFAULT_PLACE_IMG);
-                    const rating = getPlaceRating(c);
-                    const openBadge = c.open_time && c.close_time ? `${c.open_time}–${c.close_time}` : 'Đang mở cửa';
-                    const distVal = c.distance_km !== undefined && c.distance_km !== null ? c.distance_km : 1.2;
-                    const $row =$(`
-                        <div class="crud-candidate-card">
-                            <div class="d-flex align-items-center gap-3">
-                                <img src="${img}" alt="${c.ten}" class="crud-cand-img" referrerpolicy="no-referrer" onerror="this.src='${DEFAULT_PLACE_IMG}'">
-                                <div>
-                                    <div class="fw-bold text-main">${c.ten} <span class="badge bg-light text-dark border ms-1">★ ${rating}</span></div>
-                                    <div class="small text-secondary">${formatCategoryLabel(c.loai_hinh)} · Cách ${distVal} km · 🕒 ${openBadge}</div>
-                                    <div class="small text-secondary fst-italic text-truncate" style="max-width: 380px;">${firstDefined(c.review)}</div>
-                                </div>
-                            </div>
-                            <button type="button" class="btn-primary-clean btn-sm text-nowrap">↔ Chọn thay thế</button>
-                        </div>
-                    `);
-                    $row.find('button').on('click', function () {
-                        executeReplacePlace(String(loc.id), String(c.id), modalEl);
-                    });
-                    $list.append($row);
-                });
+                renderReplaceCandidatesList(modalEl);
             },
             error: function () {
                 $list.html(`
@@ -2064,7 +2911,7 @@ $(document).ready(function () {
         });
 
         if (filtered.length === 0) {
-            $list.html('<div class="text-center py-3 text-secondary">Không tìm thấy địa điểm phù hợp chưa có trong lộ trình.</div>');
+            $list.html('<div class="text-center py-4 text-muted"><i class="fa-solid fa-magnifying-glass fs-3 mb-2 d-block text-secondary opacity-50"></i>Không tìm thấy địa điểm nào phù hợp với bộ lọc hiện tại.</div>');
             return;
         }
 
@@ -2086,6 +2933,9 @@ $(document).ready(function () {
                 </div>
             `);
             $row.find('button').on('click', function () {
+                const $btn = $(this);
+                if ($btn.prop('disabled')) return;
+                $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Đang thêm...');
                 const visitMins = parseFloat($('#add-place-duration').val()) ? parseFloat($('#add-place-duration').val()) : 45;
                 const afterId = $('#add-place-after-id').val() ? $('#add-place-after-id').val() : null;
                 $.ajax({
@@ -2107,6 +2957,9 @@ $(document).ready(function () {
                     },
                     error: function (xhr) {
                         alert(firstDefined(xhr.responseJSON && xhr.responseJSON.detail, 'Không thể thêm địa điểm.'));
+                    },
+                    complete: function () {
+                        $btn.prop('disabled', false).html('＋ Thêm vào');
                     }
                 });
             });
@@ -2120,6 +2973,328 @@ $(document).ready(function () {
 
     $('#btn-open-add-place-top').on('click', function () {
         openAddPlaceModal('');
+    });
+
+    // ============================================================
+    // VẼ HÌNH CHỮ NHẬT BO GÓC TRÊN CANVAS 2D
+    // ============================================================
+    function roundRect(ctx, x, y, width, height, radius) {
+        if (ctx.roundRect) {
+            ctx.beginPath();
+            ctx.roundRect(x, y, width, height, radius);
+            return;
+        }
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
+
+    function showImageDownloadSuccessModal(dataUrl, filename) {
+        $('#itinerary-preview-img').attr('src', dataUrl);
+        $('#modal-btn-download-again').attr('href', dataUrl).attr('download', filename);
+        const modalEl = document.getElementById('imagePreviewModal');
+        if (modalEl && window.bootstrap) {
+            window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+        showCrudBanner(`Đã tải xuống ảnh lịch trình: "${filename}"`);
+    }
+
+    // ============================================================
+    // TẢI XUỐNG ẢNH LỘ TRÌNH DU LỊCH CHẤT LƯỢNG CAO (CANVAS PNG)
+    // ============================================================
+    function downloadItineraryImage() {
+        const itinerary = getActiveItinerary();
+        if (!itinerary) {
+            showCrudBanner('Vui lòng chọn hoặc tạo một lộ trình trước khi tải ảnh.', true);
+            return;
+        }
+        const routeLocs = Array.isArray(itinerary.optimized_route)
+            ? itinerary.optimized_route
+            : (Array.isArray(itinerary.places) ? itinerary.places : []);
+        if (routeLocs.length === 0) {
+            showCrudBanner('Lộ trình chưa có địa điểm nào để xuất ảnh.', true);
+            return;
+        }
+
+        const vType = tripState.baseParams ? tripState.baseParams.vehicle_type : 'xe_may';
+        const vehicleNames = {
+            'xe_may': 'Xe máy',
+            'xe_dap': 'Xe đạp',
+            'di_bo': 'Đi bộ',
+            'o_to': 'Ô tô / Taxi'
+        };
+        const vehicleLabel = vehicleNames[vType] || 'Xe máy';
+        const routeName = itinerary.route_name || itinerary.name || 'Lộ trình gợi ý Du Lịch Hà Nội';
+        const dateStr = (tripState.baseParams && tripState.baseParams.trip_date)
+            ? tripState.baseParams.trip_date
+            : new Date().toLocaleDateString('vi-VN');
+        const totalTimeHours = itinerary.total_time
+            ? (itinerary.total_time >= 60 ? `${Math.floor(itinerary.total_time / 60)}h${Math.round(itinerary.total_time % 60).toString().padStart(2, '0')}` : `${Math.round(itinerary.total_time)} phút`)
+            : '--';
+        const totalDistKm = itinerary.total_distance
+            ? `${(Number(itinerary.total_distance)).toFixed(1)} km`
+            : '--';
+        const totalCostStr = (itinerary.total_cost || itinerary.estimated_cost)
+            ? formatCurrencyVND(itinerary.total_cost || itinerary.estimated_cost)
+            : 'Theo chi tiêu thực tế';
+
+        // Độ phân giải cao (Retina 2x)
+        const scale = 2;
+        const width = 960;
+        const headerH = 250;
+        const footerH = 140;
+        const cardH = 175;
+        const connectorH = 50;
+        const totalHeight = headerH + (routeLocs.length * cardH) + Math.max(0, (routeLocs.length - 1) * connectorH) + footerH;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width * scale;
+        canvas.height = totalHeight * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(scale, scale);
+
+        // 1. Nền tổng thể
+        ctx.fillStyle = '#F8FAFC';
+        ctx.fillRect(0, 0, width, totalHeight);
+
+        // 2. Header Card (Gradient xanh navy sang trọng)
+        const grad = ctx.createLinearGradient(0, 0, width, headerH);
+        grad.addColorStop(0, '#1E3A8A');
+        grad.addColorStop(1, '#2563EB');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, width, headerH);
+
+        // Họa tiết trang trí header
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.beginPath();
+        ctx.arc(width - 80, 50, 140, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(80, 200, 80, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Brand Title
+        ctx.fillStyle = '#93C5FD';
+        ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('✦ TERAVUE · HỆ THỐNG LẬP LỘ TRÌNH DU LỊCH THÔNG MINH HÀ NỘI', 40, 45);
+
+        // Tên lộ trình
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        let displayTitle = routeName;
+        if (ctx.measureText(displayTitle).width > width - 80) {
+            while (ctx.measureText(displayTitle + '...').width > width - 80 && displayTitle.length > 10) {
+                displayTitle = displayTitle.substring(0, displayTitle.length - 1);
+            }
+            displayTitle += '...';
+        }
+        ctx.fillText(displayTitle, 40, 92);
+
+        // Stats Pills trong Header
+        const pills = [
+            `📅 Ngày: ${dateStr}`,
+            `⏱ ${totalTimeHours}`,
+            `🚗 ${totalDistKm}`,
+            `📍 ${routeLocs.length} điểm`,
+            `💰 ${totalCostStr}`
+        ];
+        
+        let pillX = 40;
+        const pillY = 125;
+        ctx.font = 'bold 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        pills.forEach(pill => {
+            const pWidth = ctx.measureText(pill).width + 24;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            roundRect(ctx, pillX, pillY, pWidth, 36, 18);
+            ctx.fill();
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(pill, pillX + 12, pillY + 23);
+            pillX += pWidth + 12;
+        });
+
+        // Ghi chú phương tiện
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+        ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText(`Phương tiện: ${vehicleLabel} · Lịch trình đã được tối ưu hóa theo cửa sổ thời gian và khoảng cách di chuyển`, 40, 205);
+
+        // 3. Render danh sách từng địa điểm
+        let currentY = headerH + 30;
+
+        routeLocs.forEach((loc, idx) => {
+            const arriveT = firstDefined(loc.arrive_time, '--:--');
+            const departT = firstDefined(loc.depart_time, '--:--');
+            const duration = firstDefined(loc.visit_time, loc.time, 60);
+            const catLabel = formatCategoryLabel(loc.loai_hinh);
+            const rating = getPlaceRating(loc);
+            const address = firstDefined(loc.dia_chi, loc.mo_ta, 'Hà Nội, Việt Nam');
+            const price = formatPlacePrice(loc);
+            const reviewText = getAccentedReview(loc);
+            const isVisited = visitedPlaceIds.has(String(firstDefined(loc.id)));
+
+            // Thẻ card trắng bo tròn
+            ctx.fillStyle = '#FFFFFF';
+            roundRect(ctx, 40, currentY, width - 80, cardH - 15, 16);
+            ctx.fill();
+
+            // Viền card
+            ctx.strokeStyle = isVisited ? '#10B981' : '#E2E8F0';
+            ctx.lineWidth = isVisited ? 2.5 : 1.2;
+            ctx.stroke();
+
+            // Badge tròn số thứ tự
+            const badgeColor = isVisited ? '#10B981' : (idx === 0 ? '#2563EB' : (idx === routeLocs.length - 1 ? '#DC2626' : '#3B82F6'));
+            ctx.fillStyle = badgeColor;
+            ctx.beginPath();
+            ctx.arc(85, currentY + 45, 22, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(isVisited ? '✓' : String(idx + 1), 85, currentY + 51);
+            ctx.textAlign = 'left';
+
+            // Tên địa điểm
+            ctx.fillStyle = '#0F172A';
+            ctx.font = 'bold 19px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            let placeName = loc.ten;
+            if (ctx.measureText(placeName).width > width - 360) {
+                while (ctx.measureText(placeName + '...').width > width - 360 && placeName.length > 5) {
+                    placeName = placeName.substring(0, placeName.length - 1);
+                }
+                placeName += '...';
+            }
+            ctx.fillText(placeName, 125, currentY + 38);
+
+            // Time slot badge
+            const timeBadge = `${arriveT} – ${departT} (${duration}p)`;
+            ctx.font = 'bold 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            const timeW = ctx.measureText(timeBadge).width + 20;
+            ctx.fillStyle = isVisited ? '#ECFDF5' : '#EFF6FF';
+            roundRect(ctx, width - 60 - timeW, currentY + 18, timeW, 30, 15);
+            ctx.fill();
+            ctx.fillStyle = isVisited ? '#059669' : '#2563EB';
+            ctx.fillText(timeBadge, width - 60 - timeW + 10, currentY + 38);
+
+            // Thể loại | Đánh giá | Chi phí
+            ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.fillStyle = '#64748B';
+            ctx.fillText(`🏷️ ${catLabel}   |   ★ ${rating}   |   💵 ${price}`, 125, currentY + 66);
+
+            // Địa chỉ
+            ctx.fillStyle = '#475569';
+            ctx.font = '13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            let addrStr = '📍 ' + address;
+            if (ctx.measureText(addrStr).width > width - 170) {
+                addrStr = addrStr.substring(0, 75) + '...';
+            }
+            ctx.fillText(addrStr, 125, currentY + 92);
+
+            // Trích dẫn review tiếng Việt có dấu
+            ctx.fillStyle = '#334155';
+            ctx.font = 'italic 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            let revStr = '“' + reviewText + '”';
+            if (ctx.measureText(revStr).width > width - 170) {
+                revStr = revStr.substring(0, 85) + '...”';
+            }
+            ctx.fillText(revStr, 125, currentY + 120);
+
+            currentY += cardH - 15;
+
+            // Chặng di chuyển nối giữa 2 điểm
+            if (idx < routeLocs.length - 1) {
+                const hasNext = (loc.travel_to_next > 0) || (loc.distance_to_next > 0);
+                const distStr = loc.distance_to_next ? `${loc.distance_to_next.toFixed(1)} km` : '';
+                const timeStr = loc.travel_to_next ? `${Math.round(loc.travel_to_next)} phút` : '';
+                const travelLabel = hasNext ? `>>> Di chuyển: ~${timeStr} (${distStr}) bằng ${vehicleLabel.toLowerCase()}` : `>>> Di chuyển sang Điểm ${idx + 2}`;
+
+                ctx.strokeStyle = '#CBD5E1';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(85, currentY);
+                ctx.lineTo(85, currentY + connectorH);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Pill chặng
+                ctx.fillStyle = '#E2E8F0';
+                ctx.font = '13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                const connW = ctx.measureText(travelLabel).width + 24;
+                roundRect(ctx, 125, currentY + 10, connW, 28, 14);
+                ctx.fill();
+                ctx.fillStyle = '#475569';
+                ctx.fillText(travelLabel, 137, currentY + 28);
+
+                currentY += connectorH;
+            }
+        });
+
+        // 4. Footer
+        currentY += 25;
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, 40, currentY, width - 80, footerH - 40, 16);
+        ctx.fill();
+        ctx.strokeStyle = '#E2E8F0';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('💡 Lưu ý hành trình:', 65, currentY + 32);
+
+        ctx.fillStyle = '#64748B';
+        ctx.font = '13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Quý khách vui lòng mặc trang phục lịch sự khi ghé thăm các di tích văn hóa - tâm linh (Lăng Bác, Đền, Chùa).', 65, currentY + 56);
+        ctx.fillText('• Chú ý bảo quản tư trang cá nhân tại nơi đông người & chúc bạn có một chuyến đi Hà Nội an toàn, trọn vẹn!', 65, currentY + 78);
+
+        // Xuất file ảnh PNG
+        const safeName = routeName.replace(/[\/:*?"<>|]/g, '_').replace(/\s+/g, '_');
+        const safeDate = String(dateStr).replace(/[\/:*?"<>|]/g, '-');
+        const filename = `Lich_Trinh_Du_Lich_Ha_Noi_${safeName}_${safeDate}.png`;
+
+        try {
+            canvas.toBlob(function (blob) {
+                if (!blob) {
+                    const dataUrl = canvas.toDataURL('image/png');
+                    triggerDownload(dataUrl, filename);
+                    showImageDownloadSuccessModal(dataUrl, filename);
+                    return;
+                }
+                const url = URL.createObjectURL(blob);
+                triggerDownload(url, filename);
+                showImageDownloadSuccessModal(url, filename);
+            }, 'image/png');
+        } catch (err) {
+            console.error('Canvas export error:', err);
+            const dataUrl = canvas.toDataURL('image/png');
+            triggerDownload(dataUrl, filename);
+            showImageDownloadSuccessModal(dataUrl, filename);
+        }
+
+        function triggerDownload(u, fn) {
+            const a = document.createElement('a');
+            a.href = u;
+            a.download = fn;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+            }, 300);
+        }
+    }
+
+
+    $(document).on('click', '#btn-download-itinerary', function () {
+        downloadItineraryImage();
     });
 
     function openChangeTimeModal(loc = null) {
@@ -2211,11 +3386,21 @@ $(document).ready(function () {
 
     function currentItineraryIds() {
         const itinerary = getActiveItinerary();
-        if (!itinerary) return [];
-        const list = Array.isArray(itinerary.optimized_route) ? itinerary.optimized_route : (Array.isArray(itinerary.places) ? itinerary.places : []);
-        return list
-            .map(place => place.id)
-            .filter(id => id && id !== 'gps_current');
+        if (itinerary) {
+            const list = Array.isArray(itinerary.optimized_route) ? itinerary.optimized_route : (Array.isArray(itinerary.places) ? itinerary.places : []);
+            const ids = list
+                .map(place => place.id)
+                .filter(id => id && id !== 'gps_current' && id !== 'custom_start');
+            if (ids.length) return ids.map(String);
+        }
+        if (tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes) && tripState.currentRoutes.routes.length) {
+            const r = tripState.currentRoutes.routes.find(x => x.route_id === tripState.selectedRouteId) || tripState.currentRoutes.routes[0];
+            const rPlaces = Array.isArray(r.optimized_route) ? r.optimized_route : (Array.isArray(r.places) ? r.places : []);
+            return rPlaces
+                .filter(p => p && p.id && p.id !== 'gps_current' && p.id !== 'custom_start' && p.loai_hinh !== 'diem_xuat_phat')
+                .map(p => String(p.id));
+        }
+        return [];
     }
 
     function escapeHtml(str) {
@@ -2255,8 +3440,8 @@ $(document).ready(function () {
                     <div class="ai-option-item-header">
                         <span class="ai-option-num">${idx + 1}</span>
                         <div class="ai-option-title-block flex-grow-1">
-                            <span class="ai-option-name">${escapeHtml(opt.ten)}</span>
-                            <span class="ai-option-cat">${escapeHtml(opt.loai_hinh || '')}</span>
+                            <span class="ai-option-name">${escapeHtml(opt.ten || opt.name || opt.title || (tripState.currentLocationData && tripState.currentLocationData.find(p => String(p.id) === String(opt.place_id))?.ten) || 'Địa điểm đề xuất')}</span>
+                            <span class="ai-option-cat">${escapeHtml(opt.loai_hinh || (tripState.currentLocationData && tripState.currentLocationData.find(p => String(p.id) === String(opt.place_id))?.loai_hinh) || '')}</span>
                         </div>
                         <div class="ai-option-badges ms-auto">
                             ${starStr}
@@ -2315,6 +3500,11 @@ $(document).ready(function () {
                     if (res.status === 'success' && res.itinerary) {
                         setCurrentItinerary(res.itinerary);
                         refreshCurrentItinerary();
+                        // RELOAD LỘ TRÌNH ĐANG ĐƯỢC CHỌN Ở SCREEN 2
+                        if (tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes)) {
+                            renderRouteCards(tripState.currentRoutes.routes);
+                            renderComparisonTable(tripState.currentRoutes.routes);
+                        }
                         $btn.html('<i class="fa-solid fa-circle-check me-1"></i> Đã chọn');
                         appendChatBubble(`Tuyệt vời! Đã thay <b>${escapeHtml(targetName || 'địa điểm cũ')}</b> bằng <b>${escapeHtml(placeName)}</b>. Bản đồ và timeline đã được cập nhật!`, 'assistant');
                     } else {
@@ -2344,8 +3534,13 @@ $(document).ready(function () {
                     if (res.status === 'success' && res.itinerary) {
                         setCurrentItinerary(res.itinerary);
                         refreshCurrentItinerary();
+                        // RELOAD LỘ TRÌNH ĐANG ĐƯỢC CHỌN Ở SCREEN 2
+                        if (tripState.currentRoutes && Array.isArray(tripState.currentRoutes.routes)) {
+                            renderRouteCards(tripState.currentRoutes.routes);
+                            renderComparisonTable(tripState.currentRoutes.routes);
+                        }
                         $btn.html('<i class="fa-solid fa-circle-check me-1"></i> Đã chọn');
-                        appendChatBubble(`Tuyệt vời! Đã thêm <b>${escapeHtml(placeName)}</b> vào lịch trình của bạn.`, 'assistant');
+                        appendChatBubble(`Tuyệt vời! Đã thêm <b>${escapeHtml(placeName)}</b> vào lịch trình của bạn. Lộ trình trên màn hình đã được cập nhật!`, 'assistant');
                     } else {
                         $btn.html('<i class="fa-solid fa-rotate me-1"></i> Thử lại');
                         $container.find('.btn-apply-ai-opt').prop('disabled', false).removeClass('opacity-50');
@@ -2479,7 +3674,7 @@ $(document).ready(function () {
             error: function (xhr) {
                 $('#ai-map-chat-log .loading').remove();
                 appendChatBubble(
-                    'Xin lỗi, mình chưa hiểu ý bạn lắm: ' + firstDefined(xhr.responseJSON && xhr.responseJSON.detail, 'vui lòng thử lại.'),
+                    'Xin lỗi, mình chưa hiểu ý bạn lắm: ' + formatErrorDetail(xhr, 'vui lòng thử lại.'),
                     'assistant'
                 );
                 isAiUpdating = false;
@@ -2528,6 +3723,21 @@ $(document).ready(function () {
     // ============================================================
     function renderFavoritesModal() {
         const $container = $('#favorites-list-container');
+        if (!currentUserId) {
+            $container.html(`
+                <div class="text-center py-5">
+                    <div class="mb-3 text-secondary" style="font-size: 3rem;">
+                        <i class="fa-regular fa-heart text-danger opacity-75"></i>
+                    </div>
+                    <h6 class="fw-bold mb-2">Đăng nhập để xem địa điểm yêu thích</h6>
+                    <p class="text-secondary small mb-3">Lưu lại những quán cà phê, góc check-in và quán ăn bạn yêu thích để dễ dàng lên lịch trình bất cứ lúc nào.</p>
+                    <button type="button" class="btn btn-primary-cta px-4 py-2" data-bs-toggle="modal" data-bs-target="#loginModal">
+                        <i class="fa-solid fa-right-to-bracket me-2"></i>Đăng nhập ngay
+                    </button>
+                </div>
+            `);
+            return;
+        }
         $container.html(`
             <div class="text-center py-5 text-secondary">
                 <i class="fa-solid fa-spinner fa-spin fa-2x mb-2 text-primary"></i>
@@ -2656,6 +3866,21 @@ $(document).ready(function () {
     // 3. PROFILE & LOGIN (ACCOUNT MANAGEMENT)
     // ============================================================
     function loadUserProfile() {
+        if (!currentUserId) {
+            $('#nav-user-name').text('Đăng nhập');
+            $('#nav-user-handle').text('Tài khoản Teravue');
+            $('#nav-user-avatar').attr('src', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80');
+            $('#nav-item-profile').hide();
+            $('#nav-item-logout').hide();
+            $('#nav-login-label').text('Đăng nhập');
+            updateFavoriteBadges(0);
+            return;
+        }
+
+        $('#nav-item-profile').show();
+        $('#nav-item-logout').show();
+        $('#nav-login-label').text('Đổi tài khoản');
+
         $.ajax({
             url: `${API_BASE}/api/user/profile?user_id=${encodeURIComponent(currentUserId)}`,
             method: 'GET',
@@ -2678,12 +3903,28 @@ $(document).ready(function () {
         });
     }
 
-    $('#accountModal').on('show.bs.modal', function () {
+    // Tự động cập nhật UI auth ngay khi khởi tạo
+    loadUserProfile();
+
+    $('#accountModal').on('show.bs.modal', function (e) {
+        if (!currentUserId) {
+            e.preventDefault();
+            const loginModalEl = document.getElementById('loginModal');
+            if (loginModalEl && window.bootstrap) {
+                window.bootstrap.Modal.getOrCreateInstance(loginModalEl).show();
+            }
+            showCrudBanner('Vui lòng đăng nhập để xem hồ sơ cá nhân.', 'warning');
+            return;
+        }
         loadUserProfile();
         $('#profile-save-feedback').empty();
     });
 
     $('#btn-save-profile').on('click', function () {
+        if (!currentUserId) {
+            showCrudBanner('Vui lòng đăng nhập để lưu thông tin hồ sơ.', 'warning');
+            return;
+        }
         const $btn = $(this);
         const newName = $('#profile_name_input').val().trim();
         const newPref = $('#profile_pref').val().trim();
@@ -2729,9 +3970,14 @@ $(document).ready(function () {
                 $btn.prop('disabled', false).html('<i class="fa-solid fa-right-to-bracket me-1"></i> Đăng nhập');
                 if (res.status === 'success' && res.data) {
                     currentUserId = res.data.id;
+                    try {
+                        localStorage.setItem('teravue_current_user_id', currentUserId);
+                    } catch (e) {}
                     $('#login-feedback').html('<span class="text-success"><i class="fa-solid fa-check me-1"></i>Đăng nhập thành công!</span>');
                     loadUserProfile();
                     syncFavoritesWithServer();
+                    refreshCurrentItinerary();
+                    showCrudBanner(`Chào mừng ${res.data.name || res.data.id} đã đăng nhập! ❤️`);
                     setTimeout(() => {
                         const m = bootstrap.Modal.getInstance(document.getElementById('loginModal'));
                         if (m) m.hide();
@@ -2744,6 +3990,21 @@ $(document).ready(function () {
                 $('#login-feedback').html('<span class="text-danger">Lỗi kết nối khi đăng nhập.</span>');
             }
         });
+    });
+
+    // Xử lý Đăng xuất tài khoản
+    $(document).on('click', '#nav-btn-logout', function (e) {
+        e.preventDefault();
+        currentUserId = null;
+        try {
+            localStorage.removeItem('teravue_current_user_id');
+            localStorage.removeItem('teravue_fav_places');
+        } catch (e) {}
+        favoritePlaceIds.clear();
+        loadUserProfile();
+        updateFavoriteBadges(0);
+        refreshCurrentItinerary();
+        showCrudBanner('Bạn đã đăng xuất tài khoản thành công.');
     });
 
     // ============================================================
@@ -2844,4 +4105,58 @@ $(document).ready(function () {
             error: () => $('#upload-status').html('<span class="text-danger">Lỗi Upload</span>')
         });
     });
+
+    // ============================================================
+    // TỰ ĐỘNG KHÔI PHỤC PHIÊN VÀ RENDER LỊCH SỬ KHI TẢI LẠI TRANG (BUG-005)
+    // ============================================================
+    function restoreSessionIfAny() {
+        renderTripHistoryUI();
+        const activeSessionId = localStorage.getItem('teravue_active_session');
+        if (!activeSessionId) return;
+
+        $.ajax({
+            url: `${API_BASE}/api/routes?session_id=${encodeURIComponent(activeSessionId)}`,
+            method: 'GET',
+            success: function (res) {
+                if (res && res.status === 'success' && res.routes && res.routes.length) {
+                    tripState.sessionId = activeSessionId;
+                    tripState.currentRoutes = res;
+                    tripState.selectedRouteId = res.selected_route_id || res.routes[0].route_id;
+
+                    $.ajax({
+                        url: `${API_BASE}/api/itinerary?session_id=${encodeURIComponent(activeSessionId)}`,
+                        method: 'GET',
+                        success: function (itinRes) {
+                            if (itinRes && itinRes.status === 'success' && itinRes.itinerary) {
+                                setCurrentItinerary(itinRes.itinerary);
+                            } else {
+                                setCurrentItinerary(res.routes[0]);
+                            }
+                            renderRouteCards(res.routes);
+                            renderComparisonTable(res.routes);
+                            selectRouteOnScreen2(tripState.selectedRouteId);
+                            $('#hero-section, #map-section').hide();
+                            $('#chat-section').fadeIn(180);
+                            setActiveNavTab('chat');
+                            showCrudBanner('Đã tự động khôi phục hành trình gần nhất của bạn.');
+                        },
+                        error: function () {
+                            setCurrentItinerary(res.routes[0]);
+                            renderRouteCards(res.routes);
+                            renderComparisonTable(res.routes);
+                            selectRouteOnScreen2(tripState.selectedRouteId);
+                            $('#hero-section, #map-section').hide();
+                            $('#chat-section').fadeIn(180);
+                            setActiveNavTab('chat');
+                        }
+                    });
+                }
+            },
+            error: function () {
+                localStorage.removeItem('teravue_active_session');
+            }
+        });
+    }
+
+    restoreSessionIfAny();
 });

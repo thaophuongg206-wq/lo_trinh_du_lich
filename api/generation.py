@@ -115,9 +115,10 @@ def run_route_generation(request: OptimizationRequest,
     has_cafe = "cafe" in preferred_tags
     has_ent = ("entertainment" in preferred_tags) or ("shopping" in preferred_tags)
     has_photo = "photo" in preferred_tags
-    has_lively = ("lively" in preferred_tags) or any(w in norm_pref for w in ("nao nhiet", "soi dong", "nhon nhip", "tap nap", "quay"))
+    has_lively = ("lively" in preferred_tags) or any(w in norm_pref for w in ("nao nhiet", "soi dong", "soi noi", "nhon nhip", "tap nap", "quay", "vui choi"))
     has_quiet = ("quiet" in preferred_tags) or any(w in norm_pref for w in ("yen tinh", "chill", "thu gian"))
     is_cafe_tour = any(kw in norm_pref for kw in ("cafe tour", "tour cafe", "cac quan cafe", "nhieu quan cafe", "cafe hopping"))
+    is_food_tour = any(kw in norm_pref for kw in ("food tour", "tour am thuc", "tour an uong", "chi di an", "chi an uong", "an sap ha noi", "food crawl"))
 
     has_specific_activity = bool(has_food or has_culture or has_cafe or has_ent or has_photo)
 
@@ -354,6 +355,14 @@ def run_route_generation(request: OptimizationRequest,
         if cafe_count > 1 and (has_specific_prefs or not is_cafe_tour):
             return None
 
+        # CHỐT CHẶN CỨNG CHO TOUR ĐI BỘ (BUG-004):
+        if request.vehicle_type == "di_bo":
+            total_walk_dist = sum(leg.get("distance_to_next", 0.0) for leg in final_route_details)
+            if total_walk_dist > 6.5:
+                return None
+            if any(leg.get("distance_to_next", 0.0) > 2.2 for leg in final_route_details):
+                return None
+
         avg_preference = sum(p.get("preference_score", 0.5) for p in route_pts) / len(route_pts)
         covered_must = len([p for p in route_pts if p["id"] in must_visit_ids])
 
@@ -395,20 +404,76 @@ def run_route_generation(request: OptimizationRequest,
             "tham_quan": 2 if has_specific_prefs else 3,
             "checkin": 1 if has_specific_prefs else 2,
         }
-        # Thích ứng theo sở thích người dùng: chỉ giới hạn chặt loại hình khi người dùng yêu cầu HOẠT ĐỘNG CỤ THỂ
-        if has_specific_activity:
+        # Thích ứng theo sở thích người dùng:
+        if has_lively and not has_culture:
+            # RÀNG BUỘC CỨNG: Lộ trình sôi nổi TUYỆT ĐỐI không chứa di tích chùa/đền tâm linh!
+            caps["tham_quan"] = 0
+            caps["tttm"] = 1
+            caps["checkin"] = 2
+            caps["an_uong"] = 2 if hours > 5.0 else 1
+            caps["cafe"] = 2 if hours > 6.0 else 1
+        elif has_quiet and not has_ent and "shopping" not in preferred_tags:
+            # RÀNG BUỘC CỨNG: Lộ trình yên tĩnh/thư giãn TUYỆT ĐỐI không chứa TTTM/rạp phim!
+            caps["tttm"] = 0
+            caps["tham_quan"] = 2
+            caps["checkin"] = 1
+            caps["cafe"] = 2 if hours > 6.0 else 1
+            caps["an_uong"] = 2 if hours > 6.0 else 1
+        elif has_food and not (has_culture or has_ent or has_cafe):
+            if is_food_tour:
+                # Chuyên tour ẩm thực / Food crawl chuyên sâu
+                caps["an_uong"] = 3 if hours > 7.0 else 2
+                caps["cafe"] = 2 if hours > 6.0 else (1 if hours > 4.0 else 0)
+                caps["checkin"] = 1
+                caps["tham_quan"] = 0
+                caps["tttm"] = 0
+            else:
+                # Khám phá kết hợp ẩm thực: ăn ngon + tham quan thủ đô + cafe thư giãn
+                caps["an_uong"] = 2 if hours > 6.0 else 1
+                caps["cafe"] = 2 if hours > 6.0 else 1
+                caps["tham_quan"] = 2 if hours > 6.0 else (1 if hours > 4.0 else 0)
+                caps["checkin"] = 1
+                caps["tttm"] = 1 if (hours > 8.0 and not has_quiet) else 0
+        elif (has_ent or "shopping" in preferred_tags) and not (has_culture or has_food or has_cafe):
+            # Đi xem phim / mua sắm giải trí: TTTM + ăn uống nạp năng lượng + cafe
+            caps["tttm"] = 1
+            caps["an_uong"] = 2 if hours > 6.0 else (1 if hours > 4.0 else 0)
+            caps["cafe"] = 1 if hours > 4.0 else 0
+            caps["checkin"] = 1
+            caps["tham_quan"] = 0
+        elif has_culture and not (has_food or has_ent or has_cafe):
+            # Khám phá văn hóa / di tích: nhiều điểm di tích + ăn uống truyền thống + cafe
+            caps["tham_quan"] = 3 if hours > 7.0 else 2
+            caps["an_uong"] = 2 if hours > 6.0 else (1 if hours > 4.0 else 0)
+            caps["cafe"] = 1 if hours > 4.0 else 0
+            caps["checkin"] = 1
+            caps["tttm"] = 0
+        elif has_cafe and not (has_food or has_ent or has_culture):
+            # Tour cafe: 2-3 quán cafe khác gu + checkin + ăn nhẹ
+            caps["cafe"] = 3 if (is_cafe_tour or hours > 8.0) else 2
+            caps["an_uong"] = 1 if hours > 4.0 else 0
+            caps["checkin"] = 2 if has_photo else 1
+            caps["tham_quan"] = 0
+            caps["tttm"] = 0
+        elif has_specific_activity:
             if not has_food:
-                caps["an_uong"] = 0
+                caps["an_uong"] = 1 if hours > 6.0 else 0
+            else:
+                caps["an_uong"] = 2 if hours > 5.0 else 1
             if not has_ent and "shopping" not in preferred_tags:
                 caps["tttm"] = 0
+            else:
+                caps["tttm"] = 1
             if not has_culture:
                 caps["tham_quan"] = 1 if (has_photo or not has_specific_prefs) else 0
+            else:
+                caps["tham_quan"] = 2
             if not has_photo and not has_culture and has_specific_prefs:
                 caps["checkin"] = 0
             elif has_photo:
                 caps["checkin"] = 2
             if not has_cafe:
-                caps["cafe"] = 0
+                caps["cafe"] = 1 if hours > 6.0 else 0
             elif has_cafe:
                 caps["cafe"] = 2 if (is_cafe_tour or has_photo or "quiet" in preferred_tags or hours > 6.0) else 1
             if has_ent:
@@ -420,13 +485,11 @@ def run_route_generation(request: OptimizationRequest,
                 caps["tttm"] = 1
                 caps["cafe"] = 1
         elif preferred_tags:
-            # Nếu người dùng chỉ nêu cảm xúc/phong cách (sôi động, yên tĩnh, lãng mạn...):
-            # Mở rộng các loại hình phù hợp với văn hóa, check-in, cafe ngắm phố
             caps["tham_quan"] = 2
             caps["checkin"] = 2
-            caps["cafe"] = 1
-            caps["an_uong"] = 1
-            caps["tttm"] = 0
+            caps["cafe"] = 2 if hours > 6.0 else 1
+            caps["an_uong"] = 2 if hours > 6.0 else 1
+            caps["tttm"] = 1 if (hours > 8.0 and not has_quiet) else 0
 
         # An toàn tuyệt đối: không bao giờ để tổng quota bằng 0
         if sum(caps.values()) == 0:
@@ -453,6 +516,7 @@ def run_route_generation(request: OptimizationRequest,
         if departure > origin_close or departure > end_clock:
             return None
         selected  = [origin]
+        selected_deps = [departure]
 
         trip_hours = available_minutes / 60.0
         cat_caps = _get_category_caps(trip_hours, theme)
@@ -461,17 +525,30 @@ def run_route_generation(request: OptimizationRequest,
             if has_ent and has_cafe:
                 max_total_stops = 2  # Đúng 1 rạp phim + 1 quán cafe!
             elif has_cafe and has_food:
-                max_total_stops = 2  # Đúng 1 quán cafe + 1 quán ăn!
+                max_total_stops = 2 if trip_hours <= 4.0 else (4 if trip_hours > 7.0 else 3)
             elif has_ent and has_culture:
                 max_total_stops = 3  # 1 rạp phim + 2 di tích
+            elif has_ent or ("shopping" in preferred_tags and not has_culture and not has_lively):
+                max_total_stops = 2 if trip_hours <= 4.0 else (4 if trip_hours > 6.0 else 3)
             elif has_lively:
-                max_total_stops = 4 if trip_hours > 5.0 else 3
+                max_total_stops = 5 if trip_hours > 8.0 else (4 if trip_hours > 5.0 else 3)
             elif has_cafe and (has_photo or "quiet" in preferred_tags):
                 max_total_stops = 3 if trip_hours > 5.0 else 2
             elif len(preferred_tags) == 1:
-                max_total_stops = 1 if (has_cafe or has_ent) else 2
+                if has_cafe or has_ent:
+                    max_total_stops = 2 if trip_hours <= 4.0 else (4 if trip_hours > 8.0 else 3)
+                elif has_quiet:
+                    # Với phong cách thư giãn / thong thả:
+                    # Nếu đi cả ngày (>= 10 tiếng): 5-6 điểm (cafe sáng, tham quan, ăn trưa, cafe chiều, ngắm cảnh hoàng hôn)
+                    # Nếu đi 7-10 tiếng: 4-5 điểm
+                    # Nếu đi nửa ngày (4-7 tiếng): 3 điểm
+                    # Nếu đi ngắn (<= 4 tiếng): 2 điểm
+                    max_total_stops = 6 if trip_hours >= 10.0 else (5 if trip_hours > 7.0 else (3 if trip_hours > 4.0 else 2))
+                else:
+                    # Đi cả ngày (>= 8 tiếng): 5-6 điểm để phủ hợp lý cả sáng và chiều
+                    max_total_stops = 6 if trip_hours >= 9.5 else (5 if trip_hours >= 7.5 else (4 if trip_hours > 4.5 else 3))
             else:
-                max_total_stops = 2 if trip_hours <= 8.0 else 3
+                max_total_stops = 6 if trip_hours >= 9.5 else (5 if trip_hours >= 7.5 else (4 if trip_hours > 4.5 else 3))
 
         # ── CANDIDATE POOL CỦA GREEDY (mục 7) ──
         # Chốt chặn thứ hai, cố ý trùng với bộ lọc ở bước 3b': kể cả khi sau này
@@ -514,6 +591,17 @@ def run_route_generation(request: OptimizationRequest,
                     continue
 
                 p_cat = category_of(p)
+                p_the_codes = {t.get("ma") for t in (p.get("the") or []) if isinstance(t, dict)}
+
+                # RÀNG BUỘC CỨNG THEO Ý ĐỊNH:
+                # 1. Sôi nổi: TUYỆT ĐỐI không đi Chùa/Đền/Lăng tâm linh (trừ khi user cố ý yêu cầu văn hóa)
+                if has_lively and not has_culture:
+                    if p_cat == "tham_quan" or "tam_linh" in p_the_codes or "yen_tinh" in p_the_codes:
+                        continue
+                # 2. Yên tĩnh: TUYỆT ĐỐI không đi TTTM/rạp phim
+                if has_quiet and not has_ent and "shopping" not in preferred_tags:
+                    if p_cat == "tttm":
+                        continue
                 cur_cat_count = sum(1 for x in selected[1:] if category_of(x) == p_cat)
 
                 # QUOTA CỨNG: Tuyệt đối không bao giờ đi 2 rạp phim / TTTM trong 1 lộ trình!
@@ -535,6 +623,20 @@ def run_route_generation(request: OptimizationRequest,
                         continue
 
                 dist = calc_dist(selected[-1], p)
+
+                # RÀNG BUỘC CHO PHƯƠNG TIỆN ĐI BỘ (BUG-004):
+                if request.vehicle_type == "di_bo" and p["id"] not in force_visit_ids and p["id"] not in must_visit_ids:
+                    # Chặng đi bộ giữa 2 điểm không quá 1.8 km đường chim bay
+                    if dist > 1.8:
+                        continue
+                    # Bán kính từ điểm xuất phát không quá 2.8 km
+                    if calc_dist(origin, p) > 2.8:
+                        continue
+                    # Tổng quãng đường tích lũy không vượt quá 4.5 km chim bay (~5.5-6.0 km thực tế)
+                    cur_walk_km = sum(calc_dist(selected[i], selected[i+1]) for i in range(len(selected)-1))
+                    if cur_walk_km + dist > 4.5 and len(selected) >= 2:
+                        continue
+
                 est_travel = get_travel_minutes(selected[-1]["id"], p["id"], dist, global_matrix, k_weather, request.vehicle_type, departure)
                 est_visit  = p.get("time") or 0
                 arrival    = departure + timedelta(minutes=est_travel)
@@ -544,6 +646,56 @@ def run_route_generation(request: OptimizationRequest,
                 nd         = sv + timedelta(minutes=est_visit)
                 if nd <= p_close and nd <= end_clock:
                     sc = score_fn(selected[-1], p, dist)
+
+                    arr_hour = sv.hour + sv.minute / 60.0
+
+                    # ── RÀNG BUỘC THỜI GIAN CHO ĐIỂM ĂN UỐNG ──
+                    if p_cat == "an_uong":
+                        # 1. Khoảng cách thời gian so với bữa ăn trước đó (tránh ăn dồn dập 2 bữa gần nhau)
+                        food_indices = [idx for idx in range(1, len(selected)) if category_of(selected[idx]) == "an_uong"]
+                        if food_indices:
+                            last_food_dep = selected_deps[food_indices[-1]]
+                            gap_mins = (sv - last_food_dep).total_seconds() / 60.0
+                            # Chưa cách bữa ăn trước ít nhất 90 phút: TUYỆT ĐỐI không ăn tiếp bữa nữa
+                            if gap_mins < 90.0:
+                                continue
+                            elif gap_mins < 150.0:
+                                sc += 50.0 + (150.0 - gap_mins) * 0.5
+
+                        # 2. Định hướng bữa ăn theo khung giờ tự nhiên
+                        has_lunch = any(
+                            11.0 <= (selected_deps[idx].hour + selected_deps[idx].minute / 60.0) <= 14.5
+                            for idx in food_indices
+                        )
+                        has_dinner = any(
+                            17.5 <= (selected_deps[idx].hour + selected_deps[idx].minute / 60.0) <= 21.0
+                            for idx in food_indices
+                        )
+
+                        # Khung giờ ăn trưa vàng: 11:15 - 13:30
+                        if 11.25 <= arr_hour <= 13.5:
+                            if not has_lunch:
+                                sc -= 40.0
+                        # Khung giờ ăn tối vàng: 17:45 - 20:00
+                        elif 17.75 <= arr_hour <= 20.0:
+                            if not has_dinner:
+                                sc -= 40.0
+                        # Giờ giữa sáng (09:15 - 11:00): giờ tham quan/cafe, phạt ăn bữa chính quá sớm
+                        elif 9.25 <= arr_hour < 11.15:
+                            sc += 35.0
+                        # Giờ giữa chiều (13:45 - 17:15): nếu đã ăn trưa thì phạt ăn tiếp bữa no giữa chiều
+                        elif 13.75 < arr_hour < 17.25 and has_lunch:
+                            sc += 35.0
+
+                    # ── ĐỊNH HƯỚNG THỜI GIAN CHO THAM QUAN & CAFE ──
+                    elif p_cat in ("tham_quan", "checkin"):
+                        # Sáng (08:30 - 11:15) và chiều (13:30 - 17:00) là khung giờ vàng tham quan
+                        if (8.5 <= arr_hour <= 11.25) or (13.5 <= arr_hour <= 17.0):
+                            sc -= 10.0
+                    elif p_cat == "cafe":
+                        # Cafe sáng (07:30 - 09:30) và cafe chiều thư giãn (14:00 - 16:30)
+                        if (7.5 <= arr_hour <= 9.5) or (14.0 <= arr_hour <= 16.5):
+                            sc -= 10.0
 
                     # Ưu tiên cực mạnh loại hình người dùng yêu cầu mà route chưa có!
                     if p_cat in missing_req:
@@ -567,6 +719,7 @@ def run_route_generation(request: OptimizationRequest,
                         best_dep   = nd
             if best_next:
                 selected.append(best_next)
+                selected_deps.append(best_dep)
                 used_ids.add(best_next["id"])
                 unvisited.remove(best_next)
                 departure = best_dep
@@ -660,7 +813,12 @@ def run_route_generation(request: OptimizationRequest,
             if has_lively:
                 strategies.insert(0, (
                     "lively", base_unvisited,
-                    lambda last, p, d: d * 0.3 + _preference_penalty(p) * 1.5, 1.0
+                    lambda last, p, d: d * 0.2 + _preference_penalty(p) * 2.5, 1.0
+                ))
+            elif has_quiet:
+                strategies.append((
+                    "relax", pool_long,
+                    lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05, 0.7
                 ))
             else:
                 strategies.append((
@@ -668,13 +826,13 @@ def run_route_generation(request: OptimizationRequest,
                     lambda last, p, d: d * 0.6 - (p.get("time") or 0) * 0.05, 0.7
                 ))
 
-            if has_food or not preferred_tags:
+            if has_food or (not preferred_tags and not has_lively):
                 strategies.append((
                     "food", pool_food or base_unvisited,
                     lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _FOOD_CATEGORIES else 0), 1.0
                 ))
 
-            if has_culture or not preferred_tags:
+            if (has_culture and not has_lively) or (not preferred_tags and not has_lively):
                 strategies.append((
                     "culture", pool_cult or base_unvisited,
                     lambda last, p, d: d - (3.0 if p.get("loai_hinh") in _CULTURE_CATEGORIES else 0), 1.0

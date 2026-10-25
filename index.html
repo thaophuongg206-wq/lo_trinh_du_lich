@@ -48,23 +48,23 @@
 
             <!-- Center: Navigation Links -->
             <nav class="navbar-center" aria-label="Điều hướng chính">
-                <a href="#hero-section" class="nav-item-link" data-screen="hero">
+                <a href="#hero-section" class="nav-item-link active" data-screen="hero" aria-current="page">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
                     </svg>
-                    <span>AI Chat</span>
+                    <span>1. Lập lịch trình</span>
                 </a>
                 <a href="#chat-section" class="nav-item-link" data-screen="chat">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582" />
                     </svg>
-                    <span>Explore</span>
+                    <span>2. Chọn phương án</span>
                 </a>
-                <a href="#map-section" class="nav-item-link active" data-screen="map" aria-current="page">
+                <a href="#map-section" class="nav-item-link" data-screen="map">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z" />
                     </svg>
-                    <span>Itinerary</span>
+                    <span>3. Lịch trình & Bản đồ</span>
                 </a>
                 <a href="#blog" class="nav-item-link" onclick="return false;">
                     <span>Blog</span>
@@ -91,11 +91,11 @@
 
                 <!-- Account Profile Dropdown Trigger -->
                 <div class="dropdown">
-                    <button type="button" class="user-profile-btn" data-bs-toggle="dropdown" aria-expanded="false">
-                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Ảnh đại diện người dùng" class="user-avatar" id="nav-user-avatar">
+                    <button type="button" class="user-profile-btn" data-bs-toggle="dropdown" aria-expanded="false" id="btn-user-dropdown">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Ảnh đại diện" class="user-avatar" id="nav-user-avatar">
                         <div class="user-info text-start d-none d-sm-block">
-                            <div class="user-name" id="nav-user-name">Du khách Hà Nội</div>
-                            <div class="user-handle" id="nav-user-handle">@traveler_hn</div>
+                            <div class="user-name" id="nav-user-name">Đăng nhập</div>
+                            <div class="user-handle" id="nav-user-handle">Tài khoản Teravue</div>
                         </div>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="heroicon-xs text-secondary ms-1">
                             <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -111,7 +111,7 @@
                                 <span class="badge bg-danger rounded-pill" id="nav-favorites-badge">0</span>
                             </a>
                         </li>
-                        <li>
+                        <li id="nav-item-profile" style="display: none;">
                             <a class="dropdown-item rounded-3 py-2 d-flex align-items-center gap-2" href="#" data-bs-toggle="modal" data-bs-target="#accountModal">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
@@ -124,7 +124,14 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
                                 </svg>
-                                <span>Đăng nhập / Đổi tài khoản</span>
+                                <span id="nav-login-label">Đăng nhập</span>
+                            </a>
+                        </li>
+                        <li id="nav-item-logout" style="display: none;">
+                            <hr class="dropdown-divider my-1">
+                            <a class="dropdown-item rounded-3 py-2 d-flex align-items-center gap-2 text-danger" href="#" id="nav-btn-logout">
+                                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                                <span>Đăng xuất</span>
                             </a>
                         </li>
                     </ul>
@@ -168,6 +175,9 @@
 
         <!-- MAIN CONTENT AREA -->
         <main class="main-stage">
+
+            <!-- GLOBAL FLOATING TOAST NOTIFICATION -->
+            <div id="crud-feedback-banner" class="crud-feedback-banner d-none" role="status" aria-live="polite"></div>
 
             <!-- ====================================================
                  SCREEN 1: NHẬP LIỆU TRUNG TÂM (#hero-section)
@@ -248,7 +258,7 @@
                                         </svg>
                                         <span>Điểm đi (Start)</span>
                                     </label>
-                                    <button type="button" id="btn-use-location" class="gps-inline-btn">
+                                    <button type="button" id="btn-use-location" class="gps-inline-btn" aria-label="Sử dụng vị trí GPS hiện tại">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="heroicon-xs">
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 2.25v2.25m0 15v2.25M2.25 12h2.25m15 0h2.25m-9.75 0a3 3 0 1 1 6 0 3 3 0 0 1-6 0Z" />
                                         </svg>
@@ -283,7 +293,7 @@
                                     </span>
                                     <span id="ai-understood-text" class="understood-summary-text">08:00–17:00 | Xe máy | Cafe | Chụp ảnh</span>
                                 </div>
-                                <button type="button" id="btn-edit-understood" class="btn-link-clean" title="Nhấn để xem chi tiết hoặc chỉnh sửa">
+                                <button type="button" id="btn-edit-understood" class="btn-link-clean" aria-label="Xem chi tiết các tiêu chí AI đã hiểu" title="Nhấn để xem chi tiết hoặc chỉnh sửa">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-xs">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
                                     </svg>
@@ -388,16 +398,24 @@
                         <!-- JS sẽ render các Route Card kèm khối chi tiết Timeline & Trải nghiệm tại đây -->
                     </div>
 
-                    <!-- BẢNG SO SÁNH CÁC LỘ TRÌNH Ở CUỐI TRANG SCREEN 2 -->
+                    <!-- SO SÁNH & ĐỊNH VỊ LỘ TRÌNH THÔNG MINH (#route-comparison-section) -->
                     <div id="route-comparison-section" class="comparison-card-wrapper mb-5">
-                        <div class="comparison-header">
+                        <div class="comparison-header mb-3">
                             <div>
-                                <span class="section-eyebrow">So sánh trực quan</span>
-                                <h3 class="routes-heading mb-0">Bảng đối chiếu các phương án lộ trình</h3>
+                                <span class="section-eyebrow"><i class="fa-solid fa-wand-magic-sparkles text-primary me-1"></i> So sánh thông minh</span>
+                                <h3 class="routes-heading mb-1">Gợi ý & Đối chiếu các phương án lộ trình</h3>
                             </div>
-                            <span class="routes-subheading">Nhấn vào cột bất kỳ trên bảng để chọn nhanh lộ trình đó</span>
+                            <span class="routes-subheading">Phân tích đặc trưng từng phương án giúp bạn chọn nhanh lộ trình ưng ý</span>
                         </div>
-                        <div class="table-responsive">
+
+                        <!-- 1. Hộp lời khuyên Trợ lý AI (Hướng 3) -->
+                        <div id="route-ai-recommendation-box" class="ai-recommendation-box mb-4"></div>
+
+                        <!-- 2. Bộ thẻ so sánh thông minh (Hướng 1) -->
+                        <div id="route-comparison-cards-grid" class="comparison-cards-grid"></div>
+
+                        <!-- Bảng ẩn cho tương thích ngược -->
+                        <div class="table-responsive d-none">
                             <table id="route-comparison-table" class="comparison-table"></table>
                         </div>
                     </div>
@@ -408,10 +426,27 @@
                  SCREEN 3: BẢN ĐỒ, ON-TRIP EXPERIENCE & TIMELINE CRUD (#map-section)
                  ==================================================== -->
             <section id="map-section" aria-label="Chi tiết lịch trình và Bản đồ">
+                <!-- Floating Mobile View Switcher (Chế độ xem thông minh trên Mobile) -->
+                <div class="mobile-view-switcher d-md-none" id="mobile-view-switcher" role="tablist" aria-label="Chế độ xem trên di động">
+                    <button type="button" class="btn-view-mode active" data-mode="split" id="btn-mode-split" title="Chia đôi: Map trên cố định, lộ trình dưới">
+                        <i class="fa-solid fa-table-columns me-1"></i>Chia đôi
+                    </button>
+                    <button type="button" class="btn-view-mode" data-mode="map" id="btn-mode-map" title="Xem bản đồ toàn màn hình">
+                        <i class="fa-solid fa-map me-1"></i>Bản đồ
+                    </button>
+                    <button type="button" class="btn-view-mode" data-mode="list" id="btn-mode-list" title="Xem danh sách lộ trình">
+                        <i class="fa-solid fa-list-check me-1"></i>Lịch trình
+                    </button>
+                </div>
+
                 <div class="itinerary-split-layout">
                     
                     <!-- CỘT TRÁI: THÔNG TIN CHUYẾN ĐI, ON-TRIP PROGRESS & TIMELINE CRUD -->
                     <aside class="route-sidebar" aria-label="Chi tiết lịch trình">
+                        <!-- Mobile Drawer Handle -->
+                        <div class="mobile-drawer-handle d-md-none" aria-hidden="true">
+                            <span class="handle-bar"></span>
+                        </div>
                         
                         <!-- Top Bar của Panel -->
                         <div class="itinerary-panel-topbar">
@@ -429,7 +464,7 @@
                                 <button type="button" class="icon-btn-sm" title="Đổi khung giờ chuyến đi" id="btn-open-trip-time">
                                     <span>⏱</span>
                                 </button>
-                                <button type="button" class="icon-btn-sm" title="Tải xuống / In lịch trình" onclick="window.print();">
+                                <button type="button" class="icon-btn-sm" id="btn-download-itinerary" title="Tải ảnh lịch trình chi tiết (.png)">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="heroicon-sm">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
                                     </svg>
@@ -497,8 +532,7 @@
                             </div>
                         </div>
 
-                        <!-- Thông báo phản hồi khi thao tác CRUD trực tiếp -->
-                        <div id="crud-feedback-banner" class="crud-feedback-banner d-none" role="status"></div>
+                        <!-- Thông báo CRUD chuyển lên toast toàn cục -->
 
                         <!-- Bộ chọn ngày & Hướng dẫn kéo thả -->
                         <div class="day-section-header">
@@ -765,9 +799,48 @@
                 </div>
                 <div class="modal-body">
                     <input type="hidden" id="replace-old-place-id" value="">
-                    <p class="small text-secondary mb-3">
-                        Đang chọn thay thế cho: <strong id="replace-old-place-name" class="text-main"></strong>. Dưới đây là các gợi ý cùng loại hình, gần lộ trình và đang mở cửa:
-                    </p>
+
+                    <!-- Target place summary banner -->
+                    <div id="replace-target-banner" class="p-3 rounded-3 mb-3 d-flex flex-wrap align-items-center justify-content-between gap-2" style="background: var(--bg-secondary); border: 1px solid var(--border-color);">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-primary px-2 py-1"><i class="fa-solid fa-location-dot me-1"></i> Điểm cần đổi</span>
+                            <div>
+                                <span class="fw-bold text-main" id="replace-old-place-name"></span>
+                                <span class="badge bg-light text-dark border ms-2" id="replace-old-place-cat"></span>
+                            </div>
+                        </div>
+                        <div class="small text-secondary" id="replace-old-place-meta">
+                            <span id="replace-old-place-time"><i class="fa-regular fa-clock me-1"></i>45p</span>
+                            <span class="mx-1">·</span>
+                            <span id="replace-old-place-slot">08:00–08:45</span>
+                        </div>
+                    </div>
+
+                    <!-- Search & category filter chips -->
+                    <div class="row g-2 mb-3 align-items-center">
+                        <div class="col-12 col-md-5">
+                            <div class="input-group">
+                                <span class="input-group-text bg-white border-end-0 text-secondary"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                <input type="text" id="replace-search-input" class="form-control clean-input border-start-0 ps-0" placeholder="Tìm theo tên địa điểm...">
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-7">
+                            <div class="replace-category-chips d-flex gap-1 overflow-x-auto pb-1" id="replace-category-chips" style="white-space: nowrap;">
+                                <button type="button" class="btn btn-sm btn-outline-primary active text-nowrap" data-cat="same">🎯 Cùng loại hình</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="">Tất cả</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="Tham quan">🏛️ Tham quan</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="Ăn uống">🍜 Ăn uống</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="Cafe">☕ Cafe</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="TTTM">🛍️ TTTM</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="replace-context-tip" class="small text-secondary mb-2">
+                        <i class="fa-solid fa-circle-info text-primary me-1"></i>
+                        <span id="replace-context-text">Gợi ý các địa điểm cùng loại hình, gần lộ trình và đang mở cửa:</span>
+                    </div>
+
                     <div id="replace-candidates-list" class="crud-candidates-list"></div>
                 </div>
             </div>
@@ -923,10 +996,39 @@
         </div>
     </div>
 
+    <!-- 5. Modal Xem & Tải ảnh Lịch trình (#imagePreviewModal) -->
+    <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-labelledby="imagePreviewModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-1">
+                    <div>
+                        <span class="section-eyebrow text-primary"><i class="fa-solid fa-image me-1"></i> Ảnh lịch trình chuyến đi</span>
+                        <h5 class="modal-title fw-bold" id="imagePreviewModalLabel">Bản lưu ảnh lộ trình du lịch</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body text-center p-3">
+                    <div class="alert alert-success py-2 px-3 mb-3 d-flex align-items-center justify-content-between" style="border-radius: 12px; font-size: 0.88rem;">
+                        <span><i class="fa-solid fa-circle-check text-success me-2"></i>Đã tạo ảnh lịch trình thành công!</span>
+                        <a href="#" id="modal-btn-download-again" class="btn btn-sm btn-success py-1 px-3" style="border-radius: 8px;">
+                            <i class="fa-solid fa-download me-1"></i> Tải lại ảnh
+                        </a>
+                    </div>
+                    <div style="background: #F1F5F9; border-radius: 16px; padding: 12px; overflow-x: auto; max-height: 65vh;">
+                        <img id="itinerary-preview-img" src="" alt="Lịch trình chi tiết" class="img-fluid rounded shadow-sm" style="max-height: 60vh; width: auto; display: block; margin: 0 auto;">
+                    </div>
+                    <div class="small text-secondary mt-2">
+                        <i class="fa-solid fa-mobile-screen-button me-1"></i> <strong>Mẹo di động:</strong> Bạn có thể <em>nhấn giữ vào ảnh</em> trên màn hình điện thoại rồi chọn <strong>"Lưu vào Ảnh" (Save to Photos)</strong> để lưu ngay vào thư viện ảnh hoặc gửi qua Zalo/Facebook.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="app.js?v=20261016_ontrip_detail"></script>
+    <script src="app.js?v=20261024_fix_6_issues_v2"></script>
 </body>
 </html>

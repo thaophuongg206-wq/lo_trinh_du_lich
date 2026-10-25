@@ -46,11 +46,11 @@ def _route_quality(route: dict, available_minutes: float) -> float:
         utilization = min(1.0, (route.get("total_time_minutes") or 0) / available_minutes)
     pref = route.get("avg_preference_score", 0.5)
     theme = route.get("theme", "")
-    theme_boost = 3.0 if theme == "lively" else 0.0
+    theme_boost = 4.0 if theme == "lively" else 0.0
     # Nếu lộ trình khớp sở thích rất cao (người dùng có gu cụ thể), ưu tiên hàng đầu độ khớp gu
     if pref >= 0.7:
-        return pref * 6.0 + n_places * 0.5 + utilization * 1.0 + theme_boost
-    return n_places * 1.0 + pref * 2.0 + utilization * 2.0 + theme_boost
+        return pref * 8.0 + n_places * 0.5 + utilization * 1.0 + theme_boost
+    return n_places * 1.0 + pref * 3.0 + utilization * 1.5 + theme_boost
 
 
 def select_diverse_routes(candidates: list, available_minutes: float, max_routes: int = 5) -> list:

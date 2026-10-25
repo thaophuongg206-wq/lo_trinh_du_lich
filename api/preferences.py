@@ -14,6 +14,7 @@ _VN_STOPWORDS = {
     "la", "va", "co", "cua", "nhieu", "rat", "mot", "toi", "muon", "thich",
     "khong", "gian", "de", "cho", "nhu", "hay", "o", "tai", "voi", "the",
     "nay", "duoc", "nhung", "cac", "nen", "hon", "it", "moi", "ve", "roi",
+    "kham", "pha", "hoat", "dong", "dia", "diem", "chuyen", "di", "lich", "trinh", "tour",
 }
 
 def _strip_diacritics(text: str) -> str:
@@ -69,6 +70,7 @@ TAG_CATEGORY = {
     "culture": {"tham quan"},
     "photo": {"checkin"},
     "entertainment": {"tttm"},
+    "lively": {"tttm", "checkin"},
 }
 
 # Cụm từ không dấu dùng để dò trong mô tả DB (so khớp theo ranh giới từ)
@@ -83,7 +85,7 @@ TAG_DB_KEYWORDS = {
     "family": ["gia dinh", "tre em", "tre nho", "nhom dong"],
     "nightlife": ["ve dem", "buoi toi", "an toi", "bar", "pho di bo"],
     "romantic": ["hen ho", "lang man", "cap doi"],
-    "lively": ["soi dong", "nhon nhip", "vui choi", "giai tri", "nhom dong"],
+    "lively": ["soi dong", "nhon nhip", "vui choi", "giai tri", "nhom dong", "soi noi", "nao nhiet", "sam uat", "tap nap", "quay", "dong vui", "rap chieu phim", "chieu phim", "cinema"],
     "entertainment": ["xem phim", "coi phim", "rap phim", "rap chieu phim", "cinema", "cgv", "lotte cinema", "bhd", "truot bang", "heroworld", "khu vui choi", "khu giai tri"],
 }
 
@@ -101,9 +103,20 @@ TAG_DB_TAGS = {          # tag sở thích -> mã thẻ (bảng THE) của đi�
     "nature": {"ngoai_troi"},
     "family": {"gia_dinh"},
     "romantic": {"hen_ho"},
-    "lively": {"vui_choi", "ban_be_nhom"},
+    "lively": {"vui_choi", "ban_be_nhom", "mua_sam_giai_tri", "di_dao", "check_in"},
     "entertainment": {"vui_choi"},
 }
+
+# Cặp đối lập ngữ nghĩa: khi người dùng có sở thích A, các điểm mang đặc tính B sẽ bị phạt mạnh
+TAG_OPPOSITE_TAGS = {
+    "lively": {"tam_linh", "yen_tinh"},                      # Sôi nổi thì không hợp chùa/đền tâm linh thanh tịnh
+    "quiet": {"vui_choi", "mua_sam_giai_tri", "dong_khach"},  # Yên tĩnh thì không hợp TTTM/rạp phim/đông đúc
+}
+TAG_OPPOSITE_CATEGORIES = {
+    "lively": {"tham_quan"},   # Di tích chùa/đền không đưa vào lộ trình hoạt động sôi nổi
+    "quiet": {"tttm"},          # TTTM / rạp phim không đưa vào lộ trình yên tĩnh
+}
+
 TAG_REVIEW_TRAITS = {    # tag sở thích -> mã đặc điểm rút từ review (review_insights.TRAITS)
     "photo": {"check_in", "view_dep"},
     "quiet": {"yen_tinh"},
@@ -213,6 +226,19 @@ def calculate_preference_score(point: dict, preference_keywords: list,
         components.append(sum(1 for t in tags if tag_matches(point, t, haystack)) / len(tags))
 
     score = sum(components) / len(components) if components else 0.5
+
+    # PHẠT NẶNG ĐẶC TÍNH ĐỐI LẬP (Ví dụ: sôi nổi mà đi chùa/đền hoặc yên tĩnh mà vào TTTM)
+    p_cat = _strip_diacritics(point.get("loai_hinh") or "").strip()
+    p_tags = _db_tag_codes(point)
+    for t in tags:
+        # Nếu người dùng chọn 'lively' mà không yêu cầu 'culture' -> phạt mạnh điểm tâm linh/yên tĩnh/tham quan
+        if t == "lively" and "culture" not in tags:
+            if p_cat in TAG_OPPOSITE_CATEGORIES.get("lively", set()) or (p_tags & TAG_OPPOSITE_TAGS.get("lively", set())):
+                score = max(0.0, score - 0.45)
+        # Nếu người dùng chọn 'quiet' mà không yêu cầu 'entertainment'/'shopping' -> phạt mạnh TTTM/vui chơi
+        elif t == "quiet" and not ({"entertainment", "shopping"} & set(tags)):
+            if p_cat in TAG_OPPOSITE_CATEGORIES.get("quiet", set()) or (p_tags & TAG_OPPOSITE_TAGS.get("quiet", set())):
+                score = max(0.0, score - 0.45)
 
     io = _indoor_outdoor(point)          # DB v2: cột trong_nha_ngoai_troi (chính xác hơn dò từ khóa)
     if indoor_pref in ("trong_nha", "ngoai_troi") and io:

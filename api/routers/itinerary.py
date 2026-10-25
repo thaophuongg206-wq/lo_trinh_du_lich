@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from api.db import fetch_all_points, V2_PUBLIC_KEYS
 from api.diversity import build_timeline
 from api.factors import VEHICLE_ACCESS_LEVEL, get_weather_factor
-from api.naming import ROUTE_THEMES
+import re
+from api.naming import ROUTE_THEMES, _fmt_minutes
 from api.osrm_matrix import get_global_osrm_matrix
 from api.preferences import _strip_diacritics
 from api.scheduling import calc_dist, get_travel_minutes
@@ -23,6 +24,11 @@ router = APIRouter()
 
 QUICK_ACTIONS = {"add_lunch", "add_cafe", "remove_one", "slow_down"}
 _QUICK_CATEGORY = {"add_lunch": "an uong", "add_cafe": "cafe"}
+
+
+class ChangeVehicleRequest(BaseModel):
+    session_id: str
+    vehicle_type: str
 
 
 class QuickActionRequest(BaseModel):
@@ -47,6 +53,7 @@ class ItineraryChangeTimeRequest(BaseModel):
     session_id: str
     place_id: Optional[str] = None
     custom_visit_time: Optional[float] = None
+    visit_time: Optional[float] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     ai_advice: Optional[str] = None
@@ -230,6 +237,8 @@ def recalculate_route_from_places(
         wait_time = 0
         if simulated_clock < p_open:
             wait_time = (p_open - simulated_clock).total_seconds() / 60
+            if wait_time >= 30 and pid != "gps_current":
+                warnings.append(f"Bạn sẽ phải chờ {int(wait_time)} phút vì '{ten}' mở cửa lúc {p_open_time.strftime('%H:%M')}.")
             simulated_clock = p_open
 
         arrive_time_str = simulated_clock.strftime("%H:%M")
@@ -289,6 +298,8 @@ def recalculate_route_from_places(
     route_id = session.selected_route_id or current_route.get("route_id", "route_1")
     theme = current_route.get("theme", "diverse")
     name = current_route.get("name") or current_route.get("route_name", "Lộ trình tuỳ chỉnh")
+    if " · Thong thả " in name:
+        name = re.sub(r" · Thong thả .*", "", name) + f" · Thong thả {_fmt_minutes(total_actual)}"
 
     new_itinerary = {
         "route_id": route_id,
@@ -316,8 +327,28 @@ def recalculate_route_from_places(
     return new_itinerary, warnings
 
 
-def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[dict]:
-    """Tìm ứng viên thay thế phù hợp: cùng loại hình, gần đó, còn mở cửa, điểm đánh giá tốt."""
+def _get_semantic_cluster(cat: str) -> str:
+    c = _strip_diacritics(cat or "").lower().strip()
+    if any(k in c for k in ["tham quan", "checkin", "check in", "di tich", "van hoa", "lich su", "chua", "den", "lang"]):
+        return "sightseeing"
+    if any(k in c for k in ["an uong", "am thuc", "nha hang", "quan an", "pho", "bun", "banh"]):
+        return "food"
+    if any(k in c for k in ["cafe", "ca phe", "coffee", "tra"]):
+        return "cafe"
+    if any(k in c for k in ["tttm", "mua sam", "giai tri", "rap"]):
+        return "entertainment"
+    return "other"
+
+
+def find_replacement_candidates(
+    session,
+    place_id: str,
+    limit: int = 15,
+    category: Optional[str] = None,
+    query: Optional[str] = None,
+    same_category_only: bool = False,
+) -> List[dict]:
+    """Tìm ứng viên thay thế phù hợp: cùng loại hình, gần đó, còn mở cửa, điểm đánh giá tốt, tính toán độ lệch lộ trình."""
     vehicle_type = session.params.get("vehicle_type", "xe_may")
     max_access = VEHICLE_ACCESS_LEVEL.get(vehicle_type, 3)
 
@@ -342,9 +373,23 @@ def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[
     if not target_place:
         return []
 
-    target_category = _strip_diacritics(target_place.get("loai_hinh") or "")
+    target_cat_raw = target_place.get("loai_hinh") or ""
+    target_category = _strip_diacritics(target_cat_raw).lower().strip()
+    target_cluster = _get_semantic_cluster(target_category)
+
+    target_lat = target_place.get("vi_do") or target_place.get("lat")
+    target_lon = target_place.get("kinh_do") or target_place.get("lon")
+    target_pt = {"lat": target_lat, "lon": target_lon} if (target_lat and target_lon) else None
+
     prev_anchor = current_places[target_idx - 1] if target_idx > 0 else None
     next_anchor = current_places[target_idx + 1] if (0 <= target_idx < len(current_places) - 1) else None
+
+    # Đoạn đường cũ nối prev_anchor -> target_place -> next_anchor
+    orig_segment_dist = 0.0
+    if prev_anchor and prev_anchor.get("lat") and target_pt:
+        orig_segment_dist += calc_dist(prev_anchor, target_pt)
+    if next_anchor and next_anchor.get("lat") and target_pt:
+        orig_segment_dist += calc_dist(target_pt, next_anchor)
 
     arr_str = target_place.get("arrive_time")
     arr_h = 12.0
@@ -355,6 +400,9 @@ def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[
         except Exception:
             pass
 
+    clean_query = _strip_diacritics(query or "").lower().strip()
+    filter_cat = _strip_diacritics(category or "").lower().strip() if category else None
+
     candidates = []
     for p in all_db_points:
         pid = str(p["id"])
@@ -363,39 +411,87 @@ def find_replacement_candidates(session, place_id: str, limit: int = 5) -> List[
         if p.get("cap_do_tiep_can", 3) > max_access:
             continue
 
-        p_cat = _strip_diacritics(p.get("loai_hinh") or "")
-        cat_match = (p_cat == target_category)
-        is_open = _is_open_during(p, arr_h, arr_h + 1.0)
+        p_cat_raw = p.get("loai_hinh") or ""
+        p_cat = _strip_diacritics(p_cat_raw).lower().strip()
+        p_cluster = _get_semantic_cluster(p_cat)
 
-        dist = 0.0
-        anchors_count = 0
-        if prev_anchor and prev_anchor.get("lat"):
-            dist += calc_dist(prev_anchor, p)
-            anchors_count += 1
-        if next_anchor and next_anchor.get("lat"):
-            dist += calc_dist(p, next_anchor)
-            anchors_count += 1
-        if anchors_count > 0:
-            dist /= anchors_count
+        cat_match = (p_cat == target_category)
+        cluster_match = (p_cluster == target_cluster)
+
+        # Bộ lọc cùng loại hình hoặc danh mục chỉ định
+        if same_category_only and not (cat_match or cluster_match):
+            continue
+
+        if filter_cat:
+            if filter_cat in ["same", "cung_loai", "cung_loai_hinh"]:
+                if not (cat_match or cluster_match):
+                    continue
+            else:
+                if filter_cat not in p_cat:
+                    continue
+
+        if clean_query:
+            p_name_clean = _strip_diacritics(p.get("ten", "")).lower()
+            p_addr_clean = _strip_diacritics(p.get("dia_chi", "")).lower()
+            p_rev_clean = _strip_diacritics(p.get("review", "")).lower()
+            if clean_query not in p_name_clean and clean_query not in p_addr_clean and clean_query not in p_rev_clean:
+                continue
+
+        cand_pt = {"lat": p.get("vi_do") or p.get("lat"), "lon": p.get("kinh_do") or p.get("lon")}
+        cand_segment_dist = 0.0
+        if prev_anchor and prev_anchor.get("lat") and cand_pt.get("lat"):
+            cand_segment_dist += calc_dist(prev_anchor, cand_pt)
+        if next_anchor and next_anchor.get("lat") and cand_pt.get("lat"):
+            cand_segment_dist += calc_dist(cand_pt, next_anchor)
+
+        delta_dist_km = round(cand_segment_dist - orig_segment_dist, 1) if (prev_anchor or next_anchor) else 0.0
+        dist_from_target = round(calc_dist(target_pt, cand_pt), 1) if (target_pt and cand_pt.get("lat")) else 0.0
+        delta_time_min = int(round((delta_dist_km / 20.0) * 60))
+
+        cand_visit_time = p.get("time") or p.get("thoi_gian_tham_quan_phut") or 45
+        is_open = _is_open_during(p, arr_h, arr_h + (cand_visit_time / 60.0))
+
+        if cat_match:
+            match_type = "exact"
+            match_label = f"Cùng loại hình ({p_cat_raw})"
+            cat_bonus = 60.0
+        elif cluster_match:
+            match_type = "compatible"
+            match_label = f"Tương đương ({p_cat_raw})"
+            cat_bonus = 40.0
+        else:
+            match_type = "alternative"
+            match_label = f"Gợi ý khác ({p_cat_raw})"
+            cat_bonus = 0.0
 
         score = _score_of(p)
-        rank_val = (10.0 if cat_match else 2.0) + score * 4.0 + (5.0 if is_open else -10.0) - dist * 0.8
+        detour_pen = max(0.0, delta_dist_km) * 2.0
+        rank_val = cat_bonus + (15.0 if is_open else -30.0) + score * 4.0 - detour_pen - dist_from_target * 1.0
 
         candidates.append({
             "id": str(p["id"]),
             "ten": p["ten"],
-            "loai_hinh": p.get("loai_hinh", ""),
+            "loai_hinh": p_cat_raw,
             "lat": p["lat"],
             "lon": p["lon"],
             "rating": p.get("rating") or p.get("diem_gia_tri"),
             **{k: p.get(k) for k in V2_PUBLIC_KEYS if k != "rating"},
             "diem_gia_tri": p.get("diem_gia_tri"),
             "review": p.get("review", ""),
+            "thong_tin_chi_tiet": p.get("thong_tin_chi_tiet", ""),
+            "phu_hop": p.get("phu_hop", ""),
             "url_hinh_anh": p.get("url_hinh_anh", ""),
-            "distance_km": round(dist, 1),
+            "distance_km": dist_from_target,
+            "dist_from_target_km": dist_from_target,
+            "delta_dist_km": delta_dist_km,
+            "delta_time_min": delta_time_min,
+            "time": cand_visit_time,
             "open_time": p.get("open_time").strftime("%H:%M") if p.get("open_time") else None,
             "close_time": p.get("close_time").strftime("%H:%M") if p.get("close_time") else None,
             "same_category": cat_match,
+            "compatible_category": cluster_match,
+            "match_type": match_type,
+            "match_label": match_label,
             "is_open": is_open,
             "_rank": rank_val,
         })
@@ -439,17 +535,6 @@ async def quick_action(req: QuickActionRequest):
         best_idx = _find_best_insert_index(places, chosen)
         places.insert(best_idx, chosen)
         message = f"Mình đã thêm {chosen['ten']} vào lịch trình của bạn."
-        min_extra = float("inf")
-        start_idx = 1 if (places and places[0].get("id") == "gps_current") else 0
-        for i in range(start_idx, len(places)):
-            p_prev = places[i - 1] if i > 0 else places[0]
-            p_next = places[i]
-            d = calc_dist(p_prev, chosen) + calc_dist(chosen, p_next) - calc_dist(p_prev, p_next)
-            if d < min_extra:
-                min_extra = d
-                best_idx = i
-        places.insert(best_idx, chosen)
-        message = f"Mình đã thêm {chosen['ten']} vào lịch trình của bạn."
     else:
         if len(non_gps) <= 2:
             return {
@@ -486,7 +571,10 @@ async def reorder_places(req: ItineraryReorderRequest):
     if session is None:
         raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
     if not session.current_itinerary:
-        raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
+        if session.route_order:
+            session.select_route(session.route_order[0])
+        else:
+            raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
 
     current_places = (session.current_itinerary or {}).get("places", [])
     place_map = {str(p["id"]): p for p in current_places}
@@ -582,16 +670,46 @@ async def replace_place(req: ItineraryReplaceRequest):
 
 @router.get("/api/itinerary/replacement-candidates")
 @router.get("/api/itinerary/places/candidates")
-async def get_replacement_candidates(session_id: str, place_id: str, limit: int = 5):
-    """LẤY DANH SÁCH ỨNG VIÊN THAY THẾ cho một địa điểm cụ thể."""
+async def get_replacement_candidates(
+    session_id: str,
+    place_id: str,
+    limit: int = 15,
+    category: Optional[str] = None,
+    query: Optional[str] = None,
+    same_category_only: bool = False,
+):
+    """LẤY DANH SÁCH ỨNG VIÊN THAY THẾ cho một địa điểm cụ thể, hỗ trợ lọc danh mục và tìm kiếm."""
     session = store.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
-    candidates = find_replacement_candidates(session, place_id, limit=limit)
+
+    current_places = (session.current_itinerary or {}).get("places", [])
+    target_place = next((p for p in current_places if str(p.get("id")) == str(place_id)), None)
+    if not target_place:
+        all_pts = fetch_all_points(vehicle_type=session.params.get("vehicle_type", "xe_may"), trip_date=session.params.get("trip_date"))
+        target_place = next((p for p in all_pts if str(p.get("id")) == str(place_id)), None)
+
+    candidates = find_replacement_candidates(
+        session,
+        place_id,
+        limit=limit,
+        category=category,
+        query=query,
+        same_category_only=same_category_only,
+    )
     return {
         "status": "success",
         "session_id": session.session_id,
         "place_id": place_id,
+        "target_place": {
+            "id": str(target_place.get("id")) if target_place else place_id,
+            "ten": target_place.get("ten") if target_place else "",
+            "loai_hinh": target_place.get("loai_hinh") if target_place else "",
+            "time": target_place.get("time") or target_place.get("thoi_gian_tham_quan_phut") or 45 if target_place else 45,
+            "arrive_time": target_place.get("arrive_time") if target_place else None,
+            "leave_time": target_place.get("leave_time") if target_place else None,
+            "url_hinh_anh": target_place.get("url_hinh_anh") if target_place else None,
+        } if target_place else None,
         "candidates": candidates,
     }
 
@@ -604,16 +722,25 @@ async def change_time(req: ItineraryChangeTimeRequest):
     if session is None:
         raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
     if not session.current_itinerary:
-        raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
+        if session.route_order:
+            session.select_route(session.route_order[0])
+        else:
+            raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
 
     current_places = list((session.current_itinerary or {}).get("places", []))
     if not current_places:
         raise HTTPException(status_code=400, detail="Lộ trình trống.")
 
     custom_times = {}
-    if req.place_id and req.custom_visit_time is not None:
+    v_time = req.custom_visit_time if req.custom_visit_time is not None else req.visit_time
+    if req.place_id and v_time is not None:
+        if v_time < 10.0 or v_time > 480.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Thời gian tham quan tùy chỉnh phải nằm trong khoảng từ 10 đến 480 phút (nhận {v_time} phút)."
+            )
         pid = str(req.place_id)
-        custom_times[pid] = max(5.0, float(req.custom_visit_time))
+        custom_times[pid] = float(v_time)
 
     if req.start_time:
         session.params["start_time"] = req.start_time
@@ -648,7 +775,10 @@ async def add_place_to_itinerary(req: ItineraryAddPlaceRequest):
     if session is None:
         raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
     if not session.current_itinerary:
-        raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
+        if session.route_order:
+            session.select_route(session.route_order[0])
+        else:
+            raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
 
     current_places = list((session.current_itinerary or {}).get("places", []))
     new_pid = str(req.place_id)
@@ -701,7 +831,10 @@ async def remove_place_from_itinerary(req: ItineraryRemovePlaceRequest):
     if session is None:
         raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
     if not session.current_itinerary:
-        raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
+        if session.route_order:
+            session.select_route(session.route_order[0])
+        else:
+            raise HTTPException(status_code=400, detail="Chưa có lộ trình nào được chọn.")
 
     current_places = list((session.current_itinerary or {}).get("places", []))
     pid = str(req.place_id)
@@ -710,6 +843,16 @@ async def remove_place_from_itinerary(req: ItineraryRemovePlaceRequest):
 
     target = next((p for p in current_places if str(p.get("id")) == pid), None)
     if not target:
+        if pid in session.excluded_ids:
+            return {
+                "status": "no_change",
+                "session_id": session.session_id,
+                "selected_route_id": session.selected_route_id,
+                "message": "Địa điểm này đã được xóa khỏi lộ trình.",
+                "warnings": [],
+                "itinerary": session.current_itinerary,
+                "routes": [session.current_itinerary],
+            }
         raise HTTPException(status_code=404, detail=f"Không tìm thấy địa điểm {pid} trong lộ trình.")
 
     non_gps = [p for p in current_places if p.get("id") != "gps_current"]
@@ -850,4 +993,36 @@ async def reoptimize_itinerary(req: ItineraryReoptimizeRequest):
         "warnings": final_warnings,
         "itinerary": final_route,
         "routes": [final_route],
+    }
+
+@router.post("/api/itinerary/change-vehicle")
+def change_vehicle(req: ChangeVehicleRequest):
+    """
+    ĐỔI PHƯƠNG TIỆN DI CHUYỂN TRÊN MÀN HÌNH BẢN ĐỒ (BUG-003).
+    Cập nhật session.params['vehicle_type'], tính lại toàn bộ ma trận thời gian OSRM,
+    cập nhật timeline chặng và lưu lại vào session.
+    """
+    session = store.get(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Phiên không tồn tại hoặc đã hết hạn.")
+    if req.vehicle_type not in ("xe_may", "o_to", "di_bo", "xe_buyt", "xe_dap"):
+        raise HTTPException(status_code=400, detail="Phương tiện không hợp lệ.")
+
+    session.params["vehicle_type"] = req.vehicle_type
+    current_itin = session.current_itinerary
+    if not current_itin:
+        raise HTTPException(status_code=404, detail="Chưa có lộ trình hiện tại trong phiên.")
+
+    places = current_itin.get("optimized_route") or current_itin.get("places") or []
+    updated_route, warnings = recalculate_route_from_places(session, places)
+    session.set_current_itinerary(updated_route)
+
+    return {
+        "status": "success",
+        "message": f"Đã chuyển sang phương tiện {req.vehicle_type} và tính lại thời gian di chuyển.",
+        "session_id": session.session_id,
+        "selected_route_id": session.selected_route_id,
+        "itinerary": updated_route,
+        "routes": [updated_route],
+        "warnings": warnings,
     }
