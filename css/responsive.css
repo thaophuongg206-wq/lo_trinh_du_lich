@@ -1,0 +1,497 @@
+/* ============================================================
+   RESPONSIVE BREAKPOINTS
+   ============================================================ */
+@media (max-width: 1199.98px) {
+    .route-sidebar {
+        width: 430px;
+    }
+}
+
+@media (max-width: 991.98px) {
+    .navbar-center {
+        display: none;
+    }
+    .route-sidebar {
+        width: 380px;
+        padding: 16px;
+    }
+}
+
+/* ===== MOBILE FLOATING VIEW SWITCHER (CHẾ ĐỘ XEM TRÊN DI ĐỘNG) ===== */
+.mobile-view-switcher {
+    position: absolute;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 800;
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 30px;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+}
+
+.btn-view-mode {
+    background: transparent;
+    border: none;
+    color: #CBD5E1;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 20px;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    white-space: nowrap;
+}
+
+.btn-view-mode:hover {
+    color: #FFFFFF;
+}
+
+.btn-view-mode.active {
+    background: var(--primary-blue, #2563EB);
+    color: #FFFFFF;
+    box-shadow: 0 2px 10px rgba(37, 99, 235, 0.45);
+}
+
+.mobile-drawer-handle {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding: 4px 0 10px;
+    cursor: grab;
+}
+
+.mobile-drawer-handle .handle-bar {
+    width: 38px;
+    height: 4px;
+    background-color: var(--border-color, #CBD5E1);
+    border-radius: 999px;
+    opacity: 0.85;
+}
+
+@media (max-width: 767.98px) {
+    /* Screen 3: Cố định Map ở trên, Timeline cuộn độc lập ở dưới */
+    #map-section {
+        height: calc(100vh - var(--navbar-height));
+        height: calc(100dvh - var(--navbar-height));
+        overflow: hidden !important;
+        position: relative;
+    }
+    
+    .itinerary-split-layout {
+        flex-direction: column !important;
+        height: 100% !important;
+        overflow: hidden !important;
+        position: relative;
+    }
+    
+    /* Chế độ Chia đôi (Split view - Mặc định trên di động) */
+    .map-stage {
+        width: 100% !important;
+        height: 38vh !important;
+        min-height: 200px !important;
+        max-height: 42vh !important;
+        flex-shrink: 0 !important;
+        order: 1 !important;
+        position: relative;
+        z-index: 10;
+        transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    .route-sidebar {
+        width: 100% !important;
+        height: auto !important;
+        flex: 1 1 auto !important;
+        max-height: none !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        border-right: none !important;
+        border-top: 1px solid var(--border-color) !important;
+        border-radius: 20px 20px 0 0;
+        box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
+        order: 2 !important;
+        padding: 8px 14px 80px !important;
+        background-color: var(--bg-card);
+        z-index: 20;
+        transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Chế độ xem Bản đồ toàn màn hình (Mobile Mode: Map) */
+    #map-section.mobile-mode-map .map-stage {
+        height: 100% !important;
+        max-height: none !important;
+        flex: 1 !important;
+    }
+    #map-section.mobile-mode-map .route-sidebar {
+        display: none !important;
+    }
+
+    /* Chế độ xem Lịch trình toàn màn hình (Mobile Mode: List) */
+    #map-section.mobile-mode-list .map-stage {
+        display: none !important;
+    }
+    #map-section.mobile-mode-list .route-sidebar {
+        height: 100% !important;
+        border-radius: 0 !important;
+        border-top: none !important;
+        padding-top: 14px !important;
+    }
+
+    /* Transport Toolbar tinh gọn trên mobile */
+    .map-transport-toolbar {
+        right: 10px !important;
+        top: auto !important;
+        bottom: 12px !important;
+        transform: none !important;
+        padding: 4px !important;
+        gap: 4px !important;
+        border-radius: 20px !important;
+    }
+    .transport-tool-btn {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 0.8rem !important;
+    }
+    
+    .map-floating-day-pill {
+        top: 10px !important;
+        right: 10px !important;
+        font-size: 0.72rem !important;
+        padding: 4px 8px !important;
+    }
+
+    .map-route-card {
+        display: none !important;
+    }
+
+    /* Screen 2: Tối ưu khoảng cách và kích thước nút bấm trên di động */
+    .screen2-header {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 12px !important;
+    }
+    .screen2-header .d-flex.gap-2 {
+        flex-direction: column !important;
+        width: 100% !important;
+    }
+    .screen2-header .btn-primary-clean,
+    .screen2-header .btn-secondary-clean {
+        width: 100% !important;
+        justify-content: center !important;
+        padding: 10px 14px !important;
+    }
+    .s2-timeline-item {
+        flex-direction: column !important;
+    }
+    .s2-timeline-img {
+        width: 100% !important;
+        height: 140px !important;
+    }
+
+    /* Screen 1: Tối ưu form nhập liệu cho mobile */
+    #hero-section {
+        padding: 20px 12px !important;
+    }
+    .hero-title {
+        font-size: 1.6rem !important;
+        line-height: 1.25 !important;
+    }
+    .search-box {
+        padding: 16px 14px !important;
+        border-radius: 16px !important;
+    }
+}
+
+/* ===== Task 3: dữ liệu địa điểm v2 (thẻ, ảnh, review nổi bật, ghi chú giờ/giá) ===== */
+.pd-gallery { display: flex; gap: 6px; padding: 8px 16px 0; overflow-x: auto; }
+.pd-gallery:empty { display: none; }
+.pd-thumb { width: 64px; height: 48px; object-fit: cover; border-radius: 6px; cursor: pointer; opacity: .65; border: 2px solid transparent; flex: 0 0 auto; }
+.pd-thumb.active, .pd-thumb:hover { opacity: 1; border-color: var(--primary, #0d6efd); }
+.pd-info-note { display: block; margin-top: 2px; font-size: .72rem; line-height: 1.25; color: #6c757d; }
+.pd-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.pd-chip { font-size: .74rem; padding: 2px 9px; border-radius: 999px; background: #eef2f7; color: #344054; }
+.pd-chip-space { background: #e8f1ff; color: #1d4ed8; }
+.pd-chip-act { background: #f1f5f9; }
+.pd-chip-good { background: #e7f6ec; color: #166534; }
+.pd-chip-warn { background: #fff4e0; color: #9a5b00; }
+
+/* ===== AI Refine Candidate Options Cards ===== */
+.ai-refine-options-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+    align-self: flex-start;
+    width: 100%;
+}
+
+.ai-options-header {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-secondary, #64748B);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.ai-option-item {
+    background-color: var(--bg-card, #FFFFFF);
+    border: 1.5px solid var(--border-color, #E2E8F0);
+    border-radius: var(--radius-md, 8px);
+    padding: 10px 12px;
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+    transition: all 0.2s ease;
+}
+
+.ai-option-item:hover {
+    border-color: var(--primary-blue, #3978D4);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0,0,0,0.1));
+}
+
+.ai-option-item-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ai-option-num {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: var(--primary-blue, #3978D4);
+    color: #FFFFFF;
+    font-size: 0.72rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ai-option-title-block {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.ai-option-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-main, #0F172A);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-option-cat {
+    font-size: 0.7rem;
+    color: var(--text-muted, #94A3B8);
+}
+
+.ai-option-badges {
+    display: flex;
+    gap: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.opt-tag-pill {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 12px;
+    background-color: #F1F5F9;
+    color: #475569;
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+
+.ai-option-reason {
+    font-size: 0.78rem;
+    color: #475569;
+    line-height: 1.4;
+    background-color: #F8FAFC;
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+.btn-apply-ai-opt {
+    font-size: 0.75rem !important;
+    padding: 4px 10px !important;
+    font-weight: 600 !important;
+    border-radius: 6px !important;
+}
+
+/* ===== Adaptive Replanning Alert Banner ===== */
+.adaptive-replan-banner {
+    background: linear-gradient(135deg, #FEF3C7 0%, #FFFBEB 100%);
+    border: 1.5px solid #F59E0B;
+    border-radius: var(--radius-md, 8px);
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 4px rgba(245, 158, 11, 0.12);
+    animation: fadeInSlide 0.3s ease;
+}
+
+@keyframes fadeInSlide {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.adaptive-badge-icon {
+    font-size: 1.35rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: #FFFFFF;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    flex-shrink: 0;
+}
+
+.adaptive-banner-title {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: #92400E;
+}
+
+.adaptive-banner-desc {
+    font-size: 0.78rem;
+    color: #78350F;
+    line-height: 1.45;
+}
+
+.btn-sim-replan {
+    font-size: 0.72rem !important;
+    padding: 2px 8px !important;
+    font-weight: 600 !important;
+    border-radius: 6px !important;
+    background: #FFFFFF;
+}
+
+.btn-sim-replan:hover {
+    background: #EFF6FF !important;
+    color: var(--primary-blue, #3978D4) !important;
+    border-color: var(--primary-blue, #3978D4) !important;
+}
+
+/* ===== Favorites List Item UI ===== */
+.fav-item-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #FFFFFF;
+    border: 1px solid var(--border-color, #E2E8F0);
+    border-radius: var(--radius-md, 8px);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    transition: all 0.2s ease;
+}
+
+.fav-item-card:hover {
+    border-color: var(--primary-blue, #3978D4);
+    box-shadow: var(--shadow-sm, 0 2px 4px rgba(0,0,0,0.05));
+}
+
+.fav-item-img {
+    width: 64px;
+    height: 64px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.fav-item-info {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.fav-item-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-main, #0F172A);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fav-item-meta {
+    font-size: 0.74rem;
+    color: var(--text-secondary, #64748B);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.fav-item-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+
+/* Accessibility: Hỗ trợ giảm chuyển động cho người dùng nhạy cảm tiền đình */
+@media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+
+/* Huy hiệu chỉ báo còn N điểm đến tiếp theo trên dải ảnh */
+.route-photo-more-badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 85px;
+    height: 90px;
+    background: #EFF6FF;
+    border: 1.5px dashed var(--primary-blue, #2563EB);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 6px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.route-photo-more-badge:hover {
+    background: #DBEAFE;
+    transform: translateY(-2px);
+}
+
+.route-photo-more-circle {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary-blue, #2563EB);
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+}
+
+.route-photo-more-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--primary-blue, #2563EB);
+}

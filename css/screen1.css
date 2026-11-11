@@ -1,0 +1,203 @@
+/* ============================================================
+   SCREEN 1: HERO INPUT SECTION (#hero-section)
+   ============================================================ */
+#hero-section {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+}
+
+.hero-container {
+    width: 100%;
+    max-width: 980px;
+}
+
+.hero-header {
+    margin-bottom: 28px;
+}
+
+.hero-pill-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius-pill);
+    background-color: var(--soft-blue);
+    color: var(--primary-blue);
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+.hero-title {
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 8px;
+}
+
+.hero-subtitle {
+    font-size: 1.02rem;
+    color: var(--text-secondary);
+    margin-bottom: 0;
+}
+
+.search-box {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    padding: 28px;
+    box-shadow: var(--shadow-md);
+}
+
+.prompt-input-wrapper {
+    margin-bottom: 20px;
+}
+
+.prompt-textarea {
+    background-color: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    font-size: 1rem;
+    color: var(--text-main);
+    resize: none;
+    transition: all 0.15s ease;
+}
+
+.prompt-textarea:focus {
+    background-color: var(--bg-card);
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 3px rgba(57, 120, 212, 0.14);
+}
+
+.hero-fields {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--divider-subtle);
+}
+
+.time-range-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.time-sep {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.gps-inline-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--soft-blue);
+    color: var(--primary-blue);
+    border: none;
+    border-radius: var(--radius-pill);
+    padding: 2px 9px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.gps-inline-btn:hover {
+    background-color: #D3E4FC;
+}
+
+.location-status-text {
+    display: block;
+    font-size: 0.75rem;
+    margin-top: 4px;
+}
+
+.ai-understood-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 10px 16px;
+    margin-bottom: 18px;
+}
+
+.understood-left {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.understood-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-main);
+}
+
+.understood-summary-text {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--primary-blue);
+    background-color: var(--bg-card);
+    padding: 3px 10px;
+    border-radius: var(--radius-pill);
+    border: 1px solid #D8E6FA;
+}
+
+.btn-link-clean {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: none;
+    color: var(--primary-blue);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn-link-clean:hover {
+    text-decoration: underline;
+}
+
+.clarification-card {
+    background-color: var(--status-warning-bg);
+    border: 1px solid #F6E0B5;
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 18px;
+}
+
+.clarification-icon {
+    color: var(--status-warning);
+    margin-top: 2px;
+}
+
+.clarification-chip {
+    background-color: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-pill);
+    padding: 6px 14px;
+    font-size: 0.84rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.clarification-chip:hover {
+    background-color: var(--primary-blue);
+    color: #FFFFFF;
+    border-color: var(--primary-blue);
+}
+

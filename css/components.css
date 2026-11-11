@@ -1,0 +1,471 @@
+/* ============================================================
+   PLACE DETAIL MODAL (#placeDetailModal)
+   ============================================================ */
+.place-detail-hero {
+    position: relative;
+    height: 230px;
+    width: 100%;
+    background-color: var(--bg-secondary);
+}
+
+.place-detail-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.place-detail-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background-color: rgba(255, 255, 255, 0.92);
+    border-radius: 50%;
+    padding: 8px;
+    box-shadow: var(--shadow-sm);
+    opacity: 1;
+}
+
+.place-detail-badges {
+    position: absolute;
+    bottom: 14px;
+    left: 20px;
+    display: flex;
+    gap: 8px;
+}
+
+.pd-cat-pill {
+    background-color: rgba(255, 255, 255, 0.95);
+    color: var(--primary-blue);
+    font-weight: 700;
+    font-size: 0.78rem;
+    padding: 4px 12px;
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-xs);
+}
+
+.pd-rating-pill {
+    background-color: #FEF5E7;
+    color: #B7791F;
+    font-weight: 700;
+    font-size: 0.78rem;
+    padding: 4px 11px;
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-xs);
+}
+
+.btn-pd-favorite {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius-pill);
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.btn-pd-favorite.active {
+    background-color: #FDECEC;
+    color: var(--status-error);
+    border-color: #F8CACA;
+}
+
+.pd-info-box {
+    background-color: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+}
+
+.pd-info-label {
+    display: block;
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.pd-info-value {
+    font-size: 0.88rem;
+    color: var(--text-main);
+}
+
+.pd-section-block {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 14px;
+}
+
+.pd-section-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+}
+
+.pd-review-box {
+    font-size: 0.88rem;
+    color: var(--text-main);
+    font-style: italic;
+    background-color: var(--bg-main);
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border-left: 3px solid #CBD5E1;
+}
+
+/* ============================================================
+   CỘT PHẢI: BẢN ĐỒ & FLOATING CONTROLS
+   ============================================================ */
+.map-stage {
+    flex: 1;
+    height: 100%;
+    position: relative;
+    background-color: #E8EEF5;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+}
+
+.map-floating-day-pill {
+    position: absolute;
+    top: 18px;
+    right: 20px;
+    z-index: 450;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-pill);
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-main);
+    box-shadow: var(--shadow-sm);
+}
+
+.map-pill-nav {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    display: inline-flex;
+    padding: 2px;
+    cursor: pointer;
+}
+
+.map-pill-nav:hover {
+    color: var(--primary-blue);
+}
+
+.map-transport-toolbar {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 450;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color);
+    border-radius: 28px;
+    padding: 8px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 10px 25px -5px rgba(38, 54, 75, 0.12), 0 4px 10px rgba(38, 54, 75, 0.06);
+    transition: box-shadow 0.2s ease;
+}
+
+.map-transport-toolbar:hover {
+    box-shadow: 0 14px 32px rgba(38, 54, 75, 0.18), 0 6px 14px rgba(38, 54, 75, 0.08);
+}
+
+.transport-tool-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    font-size: 0.95rem;
+}
+
+.transport-tool-btn:hover {
+    background-color: var(--soft-blue);
+    color: var(--primary-blue);
+    transform: scale(1.08);
+}
+
+.transport-tool-btn.active {
+    background-color: var(--primary-blue);
+    color: #FFFFFF;
+    box-shadow: 0 4px 12px rgba(57, 120, 212, 0.35);
+}
+
+/* Đặt thẻ tóm tắt chặng ở góc dưới bên trái vùng Bản đồ để nhường góc phải cho Chatbot */
+.map-route-card {
+    position: absolute;
+    bottom: 24px;
+    left: 20px;
+    z-index: 450;
+    width: 275px;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-md);
+}
+
+.route-card-icon-circle {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background-color: var(--soft-blue);
+    color: var(--primary-blue);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.route-card-small-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.route-card-big-time {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+.route-card-traffic-note {
+    font-size: 0.74rem;
+    color: var(--primary-blue);
+    background-color: var(--soft-blue);
+    padding: 7px 10px;
+    border-radius: var(--radius-sm);
+    line-height: 1.4;
+}
+
+/* Marker trên Bản đồ: Chưa đi vs Đã đi (Visited) */
+.clean-map-marker {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background-color: var(--bg-card);
+    border: 2.5px solid var(--primary-blue);
+    color: var(--text-main);
+    font-family: 'Poppins', sans-serif;
+    font-weight: 700;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 3px 8px rgba(38, 54, 75, 0.22);
+    transition: transform 0.15s ease, background-color 0.15s ease, opacity 0.2s ease;
+}
+
+.clean-map-marker:hover, .clean-map-marker.active {
+    background-color: var(--primary-blue);
+    color: #FFFFFF;
+    transform: scale(1.12);
+}
+
+.clean-map-marker.visited {
+    background-color: var(--status-success);
+    border-color: #FFFFFF;
+    color: #FFFFFF;
+    opacity: 0.82;
+}
+
+.leaflet-popup-content-wrapper {
+    background-color: var(--bg-card);
+    color: var(--text-main);
+    border-radius: 14px;
+    box-shadow: 0 10px 25px -4px rgba(15, 23, 42, 0.16), 0 4px 10px -2px rgba(15, 23, 42, 0.08);
+    border: 1px solid var(--border-color);
+    font-family: 'Poppins', sans-serif;
+    max-width: 290px;
+    overflow: hidden;
+}
+
+.leaflet-popup-content {
+    margin: 12px 14px !important;
+    max-width: 260px;
+    max-height: 220px;
+    overflow-y: auto;
+    line-height: 1.4;
+}
+
+.leaflet-popup-tip {
+    background-color: var(--bg-card);
+}
+
+/* ============================================================
+   GLOBAL AI CHATBOT WIDGET (SCREEN 2 & SCREEN 3)
+   Neo gọn ở góc dưới bên phải, không che nội dung chính
+   ============================================================ */
+.global-ai-widget {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1040;
+}
+
+.ai-fab {
+    height: 46px;
+    padding: 0 20px;
+    border-radius: var(--radius-pill);
+    background-color: var(--primary-blue);
+    color: #FFFFFF;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    box-shadow: var(--shadow-md);
+    cursor: pointer;
+    transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.ai-fab:hover {
+    background-color: var(--primary-hover);
+    transform: translateY(-2px);
+}
+
+.ai-map-chat {
+    position: absolute;
+    bottom: 58px;
+    right: 0;
+    width: 350px;
+    max-width: calc(100vw - 36px);
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    box-shadow: var(--shadow-lg);
+    display: none;
+}
+
+.ai-map-chat.open {
+    display: block;
+}
+
+.ai-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--divider-subtle);
+}
+
+.ai-status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background-color: var(--status-success);
+    flex-shrink: 0;
+}
+
+.ai-map-chat-log {
+    max-height: 240px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-right: 4px;
+}
+
+.chat-bubble {
+    padding: 9px 13px;
+    border-radius: var(--radius-md);
+    font-size: 0.84rem;
+    line-height: 1.45;
+    max-width: 88%;
+}
+
+.chat-bubble.user {
+    align-self: flex-end;
+    background-color: var(--primary-blue);
+    color: #FFFFFF;
+    border-bottom-right-radius: 4px;
+}
+
+.chat-bubble.assistant {
+    align-self: flex-start;
+    background-color: var(--bg-secondary);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    border-bottom-left-radius: 4px;
+}
+
+.ai-chat-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-send-chat {
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-sm);
+    background-color: var(--primary-blue);
+    color: #FFFFFF;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.btn-send-chat:hover {
+    background-color: var(--primary-hover);
+}
+
+/* ============================================================
+   MODALS & ADMIN TRIGGER
+   ============================================================ */
+.clean-modal {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-lg);
+}
+
+.admin-trigger {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: var(--bg-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 1050;
+    box-shadow: var(--shadow-sm);
+}
+
