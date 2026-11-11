@@ -551,3 +551,14 @@ async def parse_prompt_endpoint(payload: dict):
     context = (payload or {}).get("context")
     use_llm = (payload or {}).get("use_llm")
     return parse_prompt(prompt, context=context, use_llm=use_llm)
+
+
+
+@router.post("/api/optimize-route-nsga2")
+async def optimize_route_nsga2(request: OptimizationRequest, seeded: bool = False):
+    """NSGA-II baseline endpoint for research comparison (standard or seeded without local search)."""
+    req = request.model_copy(update={"nsga_seeded": bool(seeded), "nsga_local_search": False})
+    out = await optimize_route_hybrid(req)
+    if isinstance(out, dict):
+        out["algorithm"] = "NSGA-II (seeded)" if seeded else "NSGA-II (standard)"
+    return out

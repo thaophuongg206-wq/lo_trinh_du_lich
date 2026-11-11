@@ -39,6 +39,10 @@ def health():
 
 
 from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+if os.path.exists("images"):
+    app.mount("/images", StaticFiles(directory="images"), name="images")
 
 
 @app.get("/")
