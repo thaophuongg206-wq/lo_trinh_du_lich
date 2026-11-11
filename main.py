@@ -43,6 +43,12 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 if os.path.exists("images"):
     app.mount("/images", StaticFiles(directory="images"), name="images")
+if os.path.exists("css"):
+    app.mount("/css", StaticFiles(directory="css"), name="css")
+if os.path.exists("js"):
+    app.mount("/js", StaticFiles(directory="js"), name="js")
+if os.path.exists("data"):
+    app.mount("/data", StaticFiles(directory="data"), name="data")
 
 
 @app.get("/")
