@@ -181,7 +181,7 @@ ollama run llama3.2
 
 ### Bước 4: Khởi chạy Backend Server
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn backend.main:app --reload --port 8000
 ```
 - **Giao diện ứng dụng**: Truy cập `http://localhost:8000/`
 - **Tài liệu API tương tác (Swagger UI)**: `http://localhost:8000/docs`

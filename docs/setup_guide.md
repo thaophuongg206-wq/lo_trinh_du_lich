@@ -30,7 +30,7 @@ cp .env.example .env
 
 ### Khởi chạy Backend API (FastAPI)
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn backend.main:app --reload --port 8000
 ```
 - Swagger UI tài liệu API: `http://localhost:8000/docs`
 - Giao diện người dùng: `http://localhost:8000/`

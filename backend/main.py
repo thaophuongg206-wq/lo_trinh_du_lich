@@ -1,16 +1,23 @@
 """Application entry point — assembly only. Logic lives in api/ (HTTP layer) and core/ (algorithms).
 
-Run:  uvicorn main:app --reload --port 8000
+Run:  uvicorn backend.main:app --reload --port 8000
+Or:   cd backend && uvicorn main:app --reload --port 8000
 """
 import logging
 import os
+import sys
+
+# Ensure backend directory is in sys.path
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 try:                                   # optional: load .env if python-dotenv is installed
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(os.path.join(BACKEND_DIR, "..", ".env"))
 except ImportError:
     pass
 
@@ -41,29 +48,32 @@ def health():
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-if os.path.exists("images"):
-    app.mount("/images", StaticFiles(directory="images"), name="images")
-if os.path.exists("css"):
-    app.mount("/css", StaticFiles(directory="css"), name="css")
-if os.path.exists("js"):
-    app.mount("/js", StaticFiles(directory="js"), name="js")
-if os.path.exists("data"):
-    app.mount("/data", StaticFiles(directory="data"), name="data")
+FRONTEND_DIR = os.path.abspath(os.path.join(BACKEND_DIR, "..", "frontend"))
+DATA_DIR = os.path.abspath(os.path.join(BACKEND_DIR, "..", "data"))
+
+if os.path.exists(os.path.join(FRONTEND_DIR, "images")):
+    app.mount("/images", StaticFiles(directory=os.path.join(FRONTEND_DIR, "images")), name="images")
+if os.path.exists(os.path.join(FRONTEND_DIR, "css")):
+    app.mount("/css", StaticFiles(directory=os.path.join(FRONTEND_DIR, "css")), name="css")
+if os.path.exists(os.path.join(FRONTEND_DIR, "js")):
+    app.mount("/js", StaticFiles(directory=os.path.join(FRONTEND_DIR, "js")), name="js")
+if os.path.exists(DATA_DIR):
+    app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
 
 
 @app.get("/")
 def serve_index():
-    return FileResponse("index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/app.js")
 def serve_js():
-    return FileResponse("app.js", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(os.path.join(FRONTEND_DIR, "app.js"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/style.css")
 def serve_css():
-    return FileResponse("style.css", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(os.path.join(FRONTEND_DIR, "style.css"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # ---- backward-compatible names (old code did `from main import ...`) -------------------------

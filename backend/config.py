@@ -43,6 +43,20 @@ def _tuple(name: str, default: Tuple[float, ...]) -> Tuple[float, ...]:
         return default
 
 
+def _find_data_file(filename: str) -> str:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base_dir, "..", "data", filename),
+        os.path.join(base_dir, "data", filename),
+        os.path.join(base_dir, filename),
+        os.path.join(base_dir, "..", filename),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return os.path.abspath(p)
+    return os.path.abspath(candidates[0])
+
+
 # --------------------------------------------------------------------------- NSGA-II
 @dataclass(frozen=True)
 class NSGAConfig:
@@ -107,7 +121,7 @@ class DBConfig:
     odbc_driver: str = field(default_factory=lambda: os.getenv("DB_ODBC_DRIVER", "ODBC Driver 17 for SQL Server"))
     timeout_s: int = field(default_factory=lambda: _i("DB_TIMEOUT_S", 2))
     sqlite_path: str = field(default_factory=lambda: os.getenv(
-        "SQLITE_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "dulich.db")))
+        "SQLITE_DB", _find_data_file("dulich.db")))
 
 
 @dataclass(frozen=True)
@@ -118,7 +132,7 @@ class Settings:
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     db: DBConfig = field(default_factory=DBConfig)
     crowd_csv: str = field(default_factory=lambda: os.getenv(
-        "CROWD_CSV", os.path.join(os.path.dirname(os.path.abspath(__file__)), "crowd_history.csv")))
+        "CROWD_CSV", _find_data_file("crowd_history.csv")))
 
 
 def load() -> Settings:

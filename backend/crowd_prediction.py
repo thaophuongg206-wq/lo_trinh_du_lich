@@ -22,7 +22,13 @@ except Exception:
     GradientBoostingRegressor = None
 
 class CrowdPredictor:
-    def __init__(self, csv_path: str = "crowd_history.csv"):
+    def __init__(self, csv_path: Optional[str] = None):
+        if not csv_path or csv_path == "crowd_history.csv":
+            try:
+                from config import CFG
+                csv_path = CFG.crowd_csv
+            except Exception:
+                csv_path = "crowd_history.csv"
         self.csv_path = csv_path
         self.model = None
         self.place_map: Dict[str,int] = {}
