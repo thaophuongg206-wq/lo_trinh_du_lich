@@ -1,0 +1,41 @@
+
+    <!-- 1. Modal ＋ Thêm Địa Điểm (#addPlaceModal) -->
+    <div class="modal fade" id="addPlaceModal" tabindex="-1" aria-labelledby="addPlaceModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="section-eyebrow">＋ Thêm điểm dừng</span>
+                        <h5 class="modal-title fw-bold" id="addPlaceModalLabel">Chọn địa điểm thêm vào lộ trình</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="add-place-after-id" value="">
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-sm-6">
+                            <input type="text" id="add-place-search" class="form-control clean-input" placeholder="Tìm theo tên địa điểm...">
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <select id="add-place-category" class="form-select clean-input">
+                                <option value="">Tất cả loại hình</option>
+                                <option value="Cafe">Cafe</option>
+                                <option value="Ăn uống">Ăn uống</option>
+                                <option value="Tham quan">Tham quan</option>
+                                <option value="Checkin">Check-in</option>
+                                <option value="TTTM">Rạp phim & TTTM</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <div class="input-group">
+                                <input type="number" id="add-place-duration" class="form-control clean-input" value="45" min="15" max="240" step="5">
+                                <span class="input-group-text bg-light border-start-0 small">phút</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="add-place-candidates-list" class="crud-candidates-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+

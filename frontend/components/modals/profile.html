@@ -1,0 +1,53 @@
+                <div class="modal-body pt-3">
+                    <p class="text-secondary small mb-4">Lưu lại lịch trình yêu thích và đồng bộ dữ liệu tài khoản của bạn.</p>
+                    <form id="login-form">
+                        <div class="mb-3">
+                            <label for="login_email" class="field-label">Email tài khoản</label>
+                            <input type="email" id="login_email" class="form-control clean-input" value="traveler@teravue.vn" placeholder="ban@example.com" required>
+                        </div>
+                        <div class="mb-4">
+                            <label for="login_password" class="field-label">Mật khẩu</label>
+                            <input type="password" id="login_password" class="form-control clean-input" value="123456" placeholder="••••••••">
+                        </div>
+                        <button type="submit" id="btn-submit-login" class="btn-primary-cta w-100 py-2">
+                            <i class="fa-solid fa-right-to-bracket me-1"></i> Đăng nhập
+                        </button>
+                    </form>
+                    <div id="login-feedback" class="mt-2 text-center small fw-semibold"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="accountModal" tabindex="-1" aria-labelledby="accountModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold" id="accountModalLabel">Hồ sơ du lịch của bạn</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex align-items-center gap-3 mb-4 p-3 rounded-4" style="background: var(--bg-secondary);">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" alt="Avatar" class="rounded-circle" id="profile-avatar-img" width="56" height="56">
+                        <div>
+                            <h6 class="fw-bold mb-0" id="profile-display-name">Du khách Hà Nội</h6>
+                            <div class="small text-secondary" id="profile-display-email">traveler@teravue.vn</div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="profile_name_input" class="field-label">Họ và tên</label>
+                        <input type="text" id="profile_name_input" class="form-control clean-input" value="Du khách Hà Nội">
+                    </div>
+                    <div class="mb-3">
+                        <label for="profile_pref" class="field-label">Gu du lịch mặc định</label>
+                        <input type="text" id="profile_pref" class="form-control clean-input" value="Yên tĩnh, thích cà phê cổ điển & di tích văn hóa">
+                    </div>
+                    <button type="button" id="btn-save-profile" class="btn-primary-clean w-100 mt-2">
+                        <i class="fa-solid fa-floppy-disk me-1"></i> Lưu thông tin
+                    </button>
+                    <div id="profile-save-feedback" class="mt-2 text-center small fw-semibold"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+

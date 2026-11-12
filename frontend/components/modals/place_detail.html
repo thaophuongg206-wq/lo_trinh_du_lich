@@ -1,0 +1,82 @@
+    <!-- ============================================================
+         PLACE DETAIL MODAL (#placeDetailModal)
+         Khi click vào địa điểm: Ảnh, Rating, Review, Giờ mở cửa, Giá, Hoạt động, Favorite
+         ============================================================ -->
+    <div class="modal fade" id="placeDetailModal" tabindex="-1" aria-labelledby="placeDetailTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content clean-modal overflow-hidden">
+                <div class="place-detail-hero">
+                    <img id="pd-image" src="" alt="Hình ảnh địa điểm" class="place-detail-img" referrerpolicy="no-referrer">
+                    <button type="button" class="btn-close place-detail-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                    <div class="place-detail-badges">
+                        <span id="pd-category" class="pd-cat-pill">Điểm đến</span>
+                        <span id="pd-rating" class="pd-rating-pill">★ 4.5</span>
+                    </div>
+                </div>
+
+                <div id="pd-gallery" class="pd-gallery"></div>
+
+                <div class="modal-body p-4">
+                    <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 id="pd-title" class="fw-bold mb-1">Tên địa điểm</h4>
+                            <div id="pd-address" class="small text-secondary">
+                                <i class="fa-solid fa-location-dot text-primary me-1"></i>
+                                <span>Hà Nội</span>
+                            </div>
+                        </div>
+                        <button type="button" id="pd-fav-btn" class="btn-pd-favorite">
+                            ❤️ Yêu thích
+                        </button>
+                    </div>
+
+                    <!-- 3 Ô Thông số chính: Giờ mở cửa, Giá dự kiến, Thời gian dừng -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-sm-4">
+                            <div class="pd-info-box">
+                                <span class="pd-info-label"><i class="fa-regular fa-clock text-primary me-1"></i>Giờ mở cửa</span>
+                                <strong id="pd-hours" class="pd-info-value">08:00 – 21:00</strong>
+                                <small id="pd-hours-note" class="pd-info-note"></small>
+                            </div>
+                        </div>
+                        <div class="col-12 col-sm-4">
+                            <div class="pd-info-box">
+                                <span class="pd-info-label"><i class="fa-solid fa-wallet text-primary me-1"></i>Chi phí tham khảo</span>
+                                <strong id="pd-price" class="pd-info-value">50.000 đ</strong>
+                                <small id="pd-price-note" class="pd-info-note"></small>
+                            </div>
+                        </div>
+                        <div class="col-12 col-sm-4">
+                            <div class="pd-info-box">
+                                <span class="pd-info-label"><i class="fa-solid fa-hourglass-half text-primary me-1"></i>Khung giờ trong lịch</span>
+                                <strong id="pd-slot" class="pd-info-value">09:00 – 10:00</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Hoạt động & Trải nghiệm theo ngữ cảnh -->
+                    <div class="pd-section-block mb-3">
+                        <div class="pd-section-label">
+                            <i class="fa-solid fa-person-hiking text-primary me-1"></i> Hoạt động & Trải nghiệm gợi ý
+                        </div>
+                        <p id="pd-activity" class="mb-2 text-main fw-medium"></p>
+                        <div id="pd-tags" class="mb-2"></div>
+                        <div id="pd-context-note" class="s2-context-exp mb-0"></div>
+                    </div>
+
+                    <!-- Đánh giá & Review thực tế -->
+                    <div class="pd-section-block">
+                        <div class="pd-section-label">
+                            <i class="fa-regular fa-comment-dots text-primary me-1"></i> Đánh giá & Review thực tế
+                        </div>
+                        <div id="pd-insight" class="small text-secondary mb-2"></div>
+                        <blockquote id="pd-review" class="pd-review-box mb-0"></blockquote>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         MODALS PHỤC VỤ CRUD TRỰC TIẾP TRÊN SCREEN 3 (KHÔNG CẦN AI)
+         ============================================================ -->

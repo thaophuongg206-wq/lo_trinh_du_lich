@@ -1,0 +1,49 @@
+    <!-- 3. Modal ⏱ Đổi Thời Gian (#changeTimeModal) -->
+    <div class="modal fade" id="changeTimeModal" tabindex="-1" aria-labelledby="changeTimeModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="section-eyebrow">⏱ Điều chỉnh thời gian</span>
+                        <h5 class="modal-title fw-bold" id="changeTimeModalLabel">Cập nhật thời lượng & khung giờ</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="change-time-place-id" value="">
+                    <div id="change-time-place-box" class="mb-3 p-3 rounded-3" style="background: var(--bg-secondary);">
+                        <label for="custom_visit_time_input" class="field-label mb-1">
+                            Thời gian dừng tại <strong id="change-time-place-name" class="text-primary"></strong> (phút):
+                        </label>
+                        <input type="number" id="custom_visit_time_input" class="form-control clean-input" min="10" max="360" step="5" value="60">
+                    </div>
+
+                    <div class="row g-2 mb-4">
+                        <div class="col-6">
+                            <label for="modal_start_time" class="field-label">Giờ bắt đầu chuyến đi</label>
+                            <input type="time" id="modal_start_time" class="form-control clean-input">
+                        </div>
+                        <div class="col-6">
+                            <label for="modal_end_time" class="field-label">Giờ kết thúc dự kiến</label>
+                            <input type="time" id="modal_end_time" class="form-control clean-input">
+                        </div>
+                    </div>
+
+                    <button type="button" id="btn-confirm-change-time" class="btn-primary-cta w-100 py-2">
+                        Lưu & Tính lại giờ di chuyển
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         MODALS: ACCOUNT (LOGIN & PROFILE) + ADMIN IMPORT
+         ============================================================ -->
+    <div class="modal fade" id="loginModal" tabindex="-1" aria-labelledby="loginModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold" id="loginModalLabel">Đăng nhập Teravue</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>

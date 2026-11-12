@@ -63,7 +63,25 @@ if os.path.exists(DATA_DIR):
 
 @app.get("/")
 def serve_index():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    with open(index_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    if "<!-- INCLUDE_MODALS -->" in html:
+        modals_dir = os.path.join(FRONTEND_DIR, "components", "modals")
+        modal_files = [
+            "place_detail.html", "add_place.html", "replace_place.html",
+            "change_time.html", "profile.html", "favorites.html", "image_preview.html"
+        ]
+        modals_html = []
+        for mf in modal_files:
+            p = os.path.join(modals_dir, mf)
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as mf_f:
+                    modals_html.append(mf_f.read())
+        html = html.replace("<!-- INCLUDE_MODALS -->", "\n".join(modals_html))
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(index_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/app.js")

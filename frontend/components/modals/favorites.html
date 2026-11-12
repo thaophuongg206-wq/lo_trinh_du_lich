@@ -1,0 +1,47 @@
+    <!-- 4. Modal Danh Sách Yêu Thích (#favoritesModal) -->
+    <div class="modal fade" id="favoritesModal" tabindex="-1" aria-labelledby="favoritesModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="section-eyebrow text-danger"><i class="fa-solid fa-heart me-1"></i> Bộ sưu tập cá nhân</span>
+                        <h5 class="modal-title fw-bold" id="favoritesModalLabel">Địa điểm yêu thích đã lưu</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="favorites-list-container" class="crud-candidates-list" style="max-height: 480px; overflow-y: auto;">
+                        <div class="text-center py-5 text-secondary">
+                            <i class="fa-solid fa-spinner fa-spin fa-2x mb-2 text-primary"></i>
+                            <div>Đang tải danh sách yêu thích...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Nút ẩn Admin -->
+    <div class="admin-trigger d-none" data-bs-toggle="modal" data-bs-target="#adminModal" title="Quản trị dữ liệu">
+        <i class="fa-solid fa-gear"></i>
+    </div>
+
+    <!-- Modal Admin Import Excel -->
+    <div class="modal fade" id="adminModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0">
+                    <h5 class="modal-title fw-bold">Admin: Import Dữ liệu Địa điểm</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="file" id="excel_file" class="form-control clean-input mb-3" accept=".xlsx, .xls, .csv">
+                    <button type="button" id="btn-upload-excel" class="btn-primary-clean w-100">
+                        <i class="fa-solid fa-cloud-arrow-up me-1"></i> Tải lên Database
+                    </button>
+                    <div id="upload-status" class="mt-3 text-center fw-semibold"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+

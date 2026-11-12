@@ -1,0 +1,61 @@
+    <!-- 2. Modal ↔ Thay Thế Địa Điểm (#replacePlaceModal) -->
+    <div class="modal fade" id="replacePlaceModal" tabindex="-1" aria-labelledby="replacePlaceModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content clean-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="section-eyebrow">↔ Thay thế địa điểm</span>
+                        <h5 class="modal-title fw-bold" id="replacePlaceModalLabel">Đổi sang địa điểm tương đương</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="replace-old-place-id" value="">
+
+                    <!-- Target place summary banner -->
+                    <div id="replace-target-banner" class="p-3 rounded-3 mb-3 d-flex flex-wrap align-items-center justify-content-between gap-2" style="background: var(--bg-secondary); border: 1px solid var(--border-color);">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-primary px-2 py-1"><i class="fa-solid fa-location-dot me-1"></i> Điểm cần đổi</span>
+                            <div>
+                                <span class="fw-bold text-main" id="replace-old-place-name"></span>
+                                <span class="badge bg-light text-dark border ms-2" id="replace-old-place-cat"></span>
+                            </div>
+                        </div>
+                        <div class="small text-secondary" id="replace-old-place-meta">
+                            <span id="replace-old-place-time"><i class="fa-regular fa-clock me-1"></i>45p</span>
+                            <span class="mx-1">·</span>
+                            <span id="replace-old-place-slot">08:00–08:45</span>
+                        </div>
+                    </div>
+
+                    <!-- Search & category filter chips -->
+                    <div class="row g-2 mb-3 align-items-center">
+                        <div class="col-12 col-md-5">
+                            <div class="input-group">
+                                <span class="input-group-text bg-white border-end-0 text-secondary"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                <input type="text" id="replace-search-input" class="form-control clean-input border-start-0 ps-0" placeholder="Tìm theo tên địa điểm...">
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-7">
+                            <div class="replace-category-chips d-flex gap-1 overflow-x-auto pb-1" id="replace-category-chips" style="white-space: nowrap;">
+                                <button type="button" class="btn btn-sm btn-outline-primary active text-nowrap" data-cat="same">🎯 Cùng loại hình</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="">Tất cả</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="Tham quan">🏛️ Tham quan</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="Ăn uống">🍜 Ăn uống</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="Cafe">☕ Cafe</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-cat="TTTM">🛍️ TTTM</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="replace-context-tip" class="small text-secondary mb-2">
+                        <i class="fa-solid fa-circle-info text-primary me-1"></i>
+                        <span id="replace-context-text">Gợi ý các địa điểm cùng loại hình, gần lộ trình và đang mở cửa:</span>
+                    </div>
+
+                    <div id="replace-candidates-list" class="crud-candidates-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
