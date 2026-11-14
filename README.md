@@ -33,18 +33,24 @@ Cho tập hợp $N$ địa điểm du lịch ứng viên $\mathcal{P} = \{p_1, p
 Hệ thống tiến hành tối ưu hóa đồng thời **3 hàm mục tiêu Pareto ($f_1, f_2, f_3$)**:
 
 #### Mục tiêu 1: Tối đa hóa Trải nghiệm Du khách ($f_1 \to \max$)
-$$f_1 = \sum_{i \in \text{Route}} \left[ w_{\text{pref}} \cdot \text{SABSA}(p_i, \text{user\_pref}) + (1 - w_{\text{pref}}) \cdot \text{NormalizedRating}(p_i) \right]$$
-* **$\text{SABSA}(p_i, \text{user\_pref}) \in [0, 1]$**: Điểm số phân tích cảm xúc khía cạnh sâu (Aspect-Based Sentiment Analysis) được bóc tách từ hàng trăm đánh giá thực tế bằng LLM, đo lường mức độ tương thích giữa không gian, dịch vụ của điểm đến với gu du lịch của người dùng.
+$$
+f_1 = \sum_{i \in \text{Route}} \left[ w_{\text{pref}} \cdot \text{SABSA}(p_i, \text{user-pref}) + (1 - w_{\text{pref}}) \cdot \text{NormalizedRating}(p_i) \right]
+$$
+* **$\text{SABSA}(p_i, \text{user-pref}) \in [0, 1]$**: Điểm số phân tích cảm xúc khía cạnh sâu (Aspect-Based Sentiment Analysis) được bóc tách từ hàng trăm đánh giá thực tế bằng LLM, đo lường mức độ tương thích giữa không gian, dịch vụ của điểm đến với gu du lịch của người dùng (`user_pref`).
 * **$\text{NormalizedRating}(p_i)$**: Điểm đánh giá trung bình chuẩn hóa về thang $[0, 1]$.
 * **$w_{\text{pref}}$**: Trọng số điều chỉnh mức độ ưu tiên cá nhân hóa.
 
 #### Mục tiêu 2: Tối thiểu hóa Tổng Thời gian Hành trình ($f_2 \to \min$)
-$$f_2 = \sum_{(i,j) \in \text{Legs}} T_{\text{travel}}(i, j, \text{vehicle}, \text{traffic}) + \sum_{i \in \text{Route}} t_i^{\text{visit}} + \sum_{i \in \text{Route}} T_{\text{wait}}(i)$$
+$$
+f_2 = \sum_{(i,j) \in \text{Legs}} T_{\text{travel}}(i, j, \text{vehicle}, \text{traffic}) + \sum_{i \in \text{Route}} t_i^{\text{visit}} + \sum_{i \in \text{Route}} T_{\text{wait}}(i)
+$$
 * **$T_{\text{travel}}$**: Thời gian di chuyển thực tế theo mạng lưới đường bộ OSRM, có nhân hệ số tắc đường theo thời gian thực từ TomTom Traffic Index.
 * **$T_{\text{wait}}(i) = \max(0, O_i - \tau_i^{\text{arrive}})$**: Thời gian phải chờ đợi nếu du khách đến sớm trước khi địa điểm mở cửa.
 
 #### Mục tiêu 3: Tối thiểu hóa Rủi ro Ngoại cảnh ($f_3 \to \min$)
-$$f_3 = \sum_{i \in \text{Route}} \left[ \text{Penalty}_{\text{crowd}}(p_i, \tau_i) + \text{Penalty}_{\text{weather}}(p_i, \tau_i) \right]$$
+$$
+f_3 = \sum_{i \in \text{Route}} \left[ \text{Penalty}_{\text{crowd}}(p_i, \tau_i) + \text{Penalty}_{\text{weather}}(p_i, \tau_i) \right]
+$$
 * **$\text{Penalty}_{\text{crowd}} \in [0, 1]$**: Điểm số dự báo mật độ đông đúc theo thời gian $\tau_i$ từ mô hình hồi quy Gradient Boosting.
 * **$\text{Penalty}_{\text{weather}} \in [0, 1]$**: Hình phạt thời tiết bất lợi (mưa rào, nắng gắt vượt ngưỡng) truy vấn theo thời gian thực từ Open-Meteo API tại thời điểm $\tau_i$.
 
